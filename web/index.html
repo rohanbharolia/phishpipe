@@ -3,20 +3,37 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="PhishPipe — offline-first automated phishing investigation pipeline for SOC analysts." />
+<meta name="theme-color" content="#0a0d14" />
 <title>PhishPipe — Automated Phishing Investigation</title>
-<link rel="stylesheet" href="/static/styles.css" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128737;</text></svg>" />
+<link rel="stylesheet" href="/static/styles.css?v=2.0" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2.5 4.5 7v9.2c0 6.6 4.7 11.7 11.5 13.3 6.8-1.6 11.5-6.7 11.5-13.3V7Z' fill='%234f8cff'/%3E%3Cpath d='M10.5 11.5h11l-4.3 5.1v5l-2.4 1.4v-6.4Z' fill='%230a0d14'/%3E%3C/svg%3E" />
 </head>
 <body>
 
 <header class="topbar">
   <div class="brand">
-    <span class="logo">&#9989;</span>
-    <div>
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 32 32" width="30" height="30">
+        <defs>
+          <linearGradient id="mark-g" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#5ea2ff" />
+            <stop offset="1" stop-color="#7b6cff" />
+          </linearGradient>
+        </defs>
+        <path d="M16 2.2 4.2 6.8v9.4c0 6.9 4.9 12.2 11.8 13.9 6.9-1.7 11.8-7 11.8-13.9V6.8Z"
+              fill="url(#mark-g)" opacity="0.16" />
+        <path d="M16 2.2 4.2 6.8v9.4c0 6.9 4.9 12.2 11.8 13.9 6.9-1.7 11.8-7 11.8-13.9V6.8Z"
+              fill="none" stroke="url(#mark-g)" stroke-width="1.7" stroke-linejoin="round" />
+        <path d="M10.4 11.3h11.2l-4.4 5.2v5.4l-2.4 1.4v-6.8Z" fill="url(#mark-g)" />
+      </svg>
+    </span>
+    <div class="brand-text">
       <h1>PhishPipe</h1>
       <p>Automated phishing investigation pipeline</p>
     </div>
   </div>
+
   <div class="statusbar" id="statusbar">
     <span class="badge" id="badge-mode">…</span>
     <span class="badge" id="badge-detections">…</span>
@@ -25,33 +42,42 @@
   </div>
 </header>
 
-<section class="metrics" id="metrics" hidden></section>
+<section class="metrics" id="metrics" hidden aria-label="Pipeline metrics"></section>
 
 <main class="layout">
 
   <!-- ============ LEFT: intake ============ -->
   <aside class="pane intake">
-    <div class="card">
-      <h2>New investigation</h2>
 
-      <div class="tabs" id="intake-tabs">
-        <button class="tab active" data-pane="upload">Upload</button>
-        <button class="tab" data-pane="paste">Paste raw</button>
-        <button class="tab" data-pane="sample">Samples</button>
+    <section class="card">
+      <header class="card-head">
+        <h2>New investigation</h2>
+      </header>
+
+      <div class="tabs" id="intake-tabs" role="tablist">
+        <button class="tab active" data-pane="upload" role="tab">Upload</button>
+        <button class="tab" data-pane="paste" role="tab">Paste raw</button>
+        <button class="tab" data-pane="sample" role="tab">Samples</button>
       </div>
 
       <div class="pane-body" data-pane="upload">
         <label class="dropzone" id="dropzone" for="file-input">
           <input type="file" id="file-input" accept=".eml,.msg,.txt" hidden />
-          <span class="dz-icon">&#128228;</span>
-          <strong>Drop an .eml / .msg here</strong>
-          <span>or click to browse</span>
+          <span class="dz-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 16V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" />
+              <path d="M3.5 15v3.2A2.8 2.8 0 0 0 6.3 21h11.4a2.8 2.8 0 0 0 2.8-2.8V15" />
+            </svg>
+          </span>
+          <strong>Drop a message file here</strong>
+          <span class="dz-sub">.eml &middot; .msg &middot; .txt &mdash; or click to browse</span>
         </label>
-        <p class="hint" id="upload-hint">Max 25 MB. Headers, body and attachments are parsed locally.</p>
+        <p class="hint" id="upload-hint">Max 25 MB. Headers, body and attachments are parsed locally &mdash; nothing leaves this machine.</p>
       </div>
 
       <div class="pane-body" data-pane="paste" hidden>
-        <textarea id="raw-input" rows="14" spellcheck="false"
+        <textarea id="raw-input" rows="13" spellcheck="false"
           placeholder="Paste raw RFC 5322 message here…&#10;&#10;From: &#10;To: &#10;Subject: &#10;Authentication-Results: &#10;&#10;Body text"></textarea>
         <button class="primary" id="run-paste">Investigate pasted message</button>
       </div>
@@ -66,34 +92,57 @@
         <span id="progress-label">Running pipeline…</span>
       </div>
       <p class="error" id="error-box" hidden></p>
-    </div>
+    </section>
 
-    <div class="card">
-      <h2>Case queue <span class="count" id="case-count"></span></h2>
-      <input type="search" id="case-search" placeholder="Search subject, sender, title…" />
+    <section class="card">
+      <header class="card-head">
+        <h2>Case queue <span class="count" id="case-count"></span></h2>
+        <span class="card-meta">stored locally</span>
+      </header>
+      <div class="search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" />
+        </svg>
+        <input type="search" id="case-search" placeholder="Search subject, sender, case ID…" />
+      </div>
       <div id="case-list" class="case-list"></div>
-    </div>
+    </section>
   </aside>
 
   <!-- ============ RIGHT: results ============ -->
   <section class="pane results" id="results">
     <div class="empty" id="empty-state">
-      <div class="empty-icon">&#128270;</div>
+      <div class="empty-art" aria-hidden="true">
+        <svg viewBox="0 0 96 96" width="86" height="86" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="12" y="20" width="56" height="40" rx="5" />
+          <path d="m12 25 28 19 28-19" />
+          <circle cx="66" cy="64" r="17" stroke-width="3" />
+          <path d="m79 77 11 11" stroke-width="4" />
+          <path d="M60 64h12M66 58v12" stroke-width="2.4" opacity=".75" />
+        </svg>
+      </div>
       <h2>No investigation loaded</h2>
-      <p>Upload a phishing email, paste raw message source, or load one of the bundled samples to produce a full investigation package.</p>
+      <p>Upload a suspicious message, paste raw message source, or run one of the bundled
+         samples to produce a full investigation package.</p>
+      <div class="empty-actions">
+        <button class="primary auto" id="empty-sample">Run a bundled sample</button>
+        <button class="ghost" id="empty-upload">Upload a file</button>
+      </div>
     </div>
 
     <div id="case-view" hidden>
       <div class="verdict-hero" id="verdict-hero"></div>
 
-      <div class="tabs wide" id="result-tabs">
-        <button class="tab active" data-view="summary">Summary</button>
-        <button class="tab" data-view="signals">Signals</button>
-        <button class="tab" data-view="iocs">IOCs</button>
-        <button class="tab" data-view="enrichment">Enrichment</button>
-        <button class="tab" data-view="timeline">Timeline</button>
-        <button class="tab" data-view="report">Full report</button>
-        <button class="tab" data-view="notify">User notification</button>
+      <div class="tabs wide" id="result-tabs" role="tablist">
+        <button class="tab active" data-view="summary" role="tab">Summary</button>
+        <button class="tab" data-view="signals" role="tab">Signals</button>
+        <button class="tab" data-view="iocs" role="tab">IOCs</button>
+        <button class="tab" data-view="enrichment" role="tab">Enrichment</button>
+        <button class="tab" data-view="timeline" role="tab">Timeline</button>
+        <button class="tab" data-view="report" role="tab">Full report</button>
+        <button class="tab" data-view="notify" role="tab">User notification</button>
       </div>
 
       <div class="view" data-view="summary" id="view-summary"></div>
@@ -108,10 +157,13 @@
 </main>
 
 <footer class="foot">
-  <span>PhishPipe — offline-first triage. Indicators are shown defanged; verify against live sources before blocking.</span>
-  <a href="/docs" target="_blank" rel="noopener">API docs</a>
+  <span>PhishPipe &mdash; offline-first triage. Indicators are shown defanged; verify against live sources before blocking.</span>
+  <span class="foot-links">
+    <a href="/docs" target="_blank" rel="noopener">API docs</a>
+    <a href="/api/openapi.json" target="_blank" rel="noopener">OpenAPI</a>
+  </span>
 </footer>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2.0"></script>
 </body>
 </html>

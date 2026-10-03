@@ -262,7 +262,21 @@ def index() -> FileResponse:
 
 
 if config.WEB_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(config.WEB_DIR)), name="static")
+    class VersionedStaticFiles(StaticFiles):
+        """Serve the frontend without letting a browser pin stale assets.
+
+        Static assets are revalidated on every load (`no-cache`), which is what
+        you want while tuning the UI: an edit is visible on the next refresh
+        instead of surviving in the HTTP cache.
+        """
+
+        def file_response(self, full_path, stat_result, scope, status_code=200):
+            response = super().file_response(full_path, stat_result, scope, status_code)
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            return response
+
+    app.mount("/static", VersionedStaticFiles(directory=str(config.WEB_DIR)), name="static")
 
 
 @app.get("/api/openapi.json", include_in_schema=False)

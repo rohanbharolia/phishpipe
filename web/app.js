@@ -5,7 +5,7 @@
    ========================================================================== */
 "use strict";
 
-const state = { case: null, view: "summary", cases: [], search: "" };
+const state = { case: null, view: "summary", cases: [], samples: [], search: "" };
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -189,7 +189,7 @@ async function loadMetrics() {
       ["Needs review", m.needs_human_review],
       ["Minutes saved", `~${Math.round(m.minutes_saved)}`],
     ]
-      .map(([k, v]) => `<div class="metric"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`)
+      .map(([k, v]) => `<div class="metric"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`)
       .join("");
     box.hidden = false;
   } catch (err) { console.error("metrics failed", err); }
@@ -285,10 +285,22 @@ async function loadSamples() {
     for (const s of samples) {
       const btn = document.createElement("button");
       btn.className = "sample";
-      btn.innerHTML = `${esc(s.name)}<small>${(s.size / 1024).toFixed(1)} KB</small>`;
+      btn.title = `Run investigation on ${s.name}`;
+      btn.innerHTML = `
+        <span class="s-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2.5H6.5A1.5 1.5 0 0 0 5 4v16a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 20V7.5Z"/>
+            <path d="M14 2.5V7.5H19"/><path d="M8.5 13h7"/><path d="M8.5 16.5h4.5"/>
+          </svg>
+        </span>
+        <span class="s-name">${esc(s.name)}</span>
+        <span class="s-size">${(s.size / 1024).toFixed(1)} KB</span>
+        <span class="s-run">Run</span>`;
       btn.addEventListener("click", () => runSample(s.name));
       box.appendChild(btn);
     }
+    state.samples = samples.map((s) => s.name);
   } catch (err) { console.error("samples failed", err); }
 }
 
@@ -314,7 +326,7 @@ async function loadCases() {
         <div class="ctitle">${esc(c.subject || c.title)}</div>
         <div class="cmeta">
           <span><span class="dot" style="background:${SEV_COLOR[c.severity] || "#666"}"></span>${esc(c.severity)}</span>
-          <span>${esc(c.confidence)}%</span>
+          <span class="conf">${esc(c.confidence)}%</span>
         </div>`;
       el.addEventListener("click", () => openCase(c.id));
       box.appendChild(el);
@@ -340,10 +352,11 @@ function gauge(confidence, color) {
   const dash = (confidence / 100) * c;
   return `
     <div class="gauge">
-      <svg width="132" height="132" viewBox="0 0 132 132">
-        <circle cx="66" cy="66" r="${r}" fill="none" stroke="#263246" stroke-width="11" />
-        <circle cx="66" cy="66" r="${r}" fill="none" stroke="${color}" stroke-width="11"
-          stroke-linecap="round" stroke-dasharray="${dash} ${c - dash}" />
+      <svg width="134" height="134" viewBox="0 0 134 134">
+        <circle cx="67" cy="67" r="${r}" fill="none" stroke="#1e2739" stroke-width="10" />
+        <circle class="ring" cx="67" cy="67" r="${r}" fill="none" stroke="${color}" stroke-width="10"
+          stroke-linecap="round" stroke-dasharray="${dash} ${c - dash}"
+          style="filter: drop-shadow(0 0 5px ${color}55)" />
       </svg>
       <div class="val"><b>${esc(confidence)}</b><span>confidence</span></div>
     </div>`;
@@ -356,23 +369,32 @@ function renderCase(c) {
   $("#error-box").hidden = true;
 
   const v = c.verdict;
-  const color = SEV_COLOR[v.severity] || "#4f9cff";
+  const color = SEV_COLOR[v.severity] || "#4f8cff";
+
+  const metaPills = [
+    `<span class="pill">case ${esc(c.id)}</span>`,
+    `<span class="pill">severity ${esc(v.severity)}</span>`,
+    `<span class="pill">${esc(v.signals_matched)}/${esc(v.signals_total)} signals</span>`,
+    `<span class="pill">${esc(c.metrics.total_ms)} ms</span>`,
+    `<span class="pill">${c.metrics.offline ? "offline triage" : "live reputation"}</span>`,
+    v.needs_human_review ? `<span class="pill warn">! human review</span>` : "",
+  ].join("");
+
+  const mitre = (v.mitre || []).length
+    ? `<div class="pills group">
+         <span class="pills-label">MITRE ATT&amp;CK</span>
+         ${v.mitre.map((t) => `<span class="pill technique" title="${esc(t.tactic)}">${esc(t.id)} ${esc(t.name)}</span>`).join("")}
+       </div>`
+    : "";
 
   $("#verdict-hero").innerHTML = `
     ${gauge(v.confidence, color)}
     <div class="verdict-meta">
-      <div class="cls" style="color:${color}">${esc(CLS_LABEL[v.classification] || v.classification)}</div>
+      <span class="cls" style="color:${color}">${esc(CLS_LABEL[v.classification] || v.classification)}</span>
       <h2>${esc(c.title)}</h2>
-      <div class="pills">
-        <span class="pill">case ${esc(c.id)}</span>
-        <span class="pill">severity ${esc(v.severity)}</span>
-        <span class="pill">${esc(v.signals_matched)}/${esc(v.signals_total)} signals</span>
-        <span class="pill">${esc(c.metrics.total_ms)} ms</span>
-        <span class="pill">${c.metrics.offline ? "offline triage" : "live reputation"}</span>
-        ${v.needs_human_review ? `<span class="pill" style="border-color:#7a621f;color:#ffd93d">⚠ human review</span>` : ""}
-      </div>
-      ${v.mitre.map((t) => `<span class="pill technique" title="${esc(t.tactic)}">${esc(t.id)} ${esc(t.name)}</span>`).join(" ")}
-      <p>${esc(v.explanation)}</p>
+      <div class="pills">${metaPills}</div>
+      ${mitre}
+      <p class="explainer">${esc(v.explanation)}</p>
     </div>`;
 
   renderSummary(c);
@@ -396,7 +418,7 @@ function renderSummary(c) {
       <div>
         <h3>Why this score</h3>
         <ul class="reasoning">${v.reasoning.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
-        <h3 style="margin-top:18px">Recommended actions</h3>
+        <h3>Recommended actions</h3>
         <ol class="actions">${v.recommended_actions.map((a) => `<li>${esc(a)}</li>`).join("")}</ol>
       </div>
       <div>
@@ -414,7 +436,7 @@ function renderSummary(c) {
           <dt>Received hops</dt><dd>${(e.received_hops || []).length}</dd>
           <dt>Detected brands</dt><dd>${esc((c.detected_brands || []).join(", ")) || "—"}</dd>
         </dl>
-        <h3 style="margin-top:18px">Matched signals (${matched.length})</h3>
+        <h3>Matched signals (${matched.length})</h3>
         ${
           matched.length
             ? `<ul class="reasoning">${matched.map((s) => `<li><strong>${esc(s.title)}</strong> <span class="chip">${esc(s.weight >= 0 ? "+" + s.weight : s.weight)}</span></li>`).join("")}</ul>`
@@ -430,17 +452,17 @@ function renderSignals(c) {
       (s) => `<tr>
         <td class="mono">${esc(s.id)}</td>
         <td><strong>${esc(s.title)}</strong><div class="hint">${esc(s.description)}</div></td>
-        <td class="${s.matched ? "matched-yes" : "matched-no"}">${s.matched ? "✅ yes" : "—"}</td>
-        <td class="mono ${s.weight < 0 ? "sev-low" : ""}">${s.weight >= 0 ? "+" + s.weight : s.weight}</td>
+        <td>${s.matched ? '<span class="tag tag-yes">matched</span>' : '<span class="tag tag-no">no</span>'}</td>
+        <td class="mono num ${s.weight < 0 ? "sev-low" : ""}"><span class="chip ${s.weight < 0 ? "neg" : "pos"}">${s.weight >= 0 ? "+" + s.weight : s.weight}</span></td>
         <td class="sev-${esc(s.severity)}">${esc(s.severity)}</td>
         <td>${s.matched ? esc(defang(s.evidence)) : '<span class="hint">not matched</span>'}</td>
       </tr>`
     )
     .join("");
   $("#view-signals").innerHTML = `
-    <h3>Detection signals — raw score ${c.verdict.raw_score} clamped to ${c.verdict.confidence}/100</h3>
+    <h3>Detection signals &mdash; raw score ${c.verdict.raw_score} clamped to ${c.verdict.confidence}/100</h3>
     <table>
-      <thead><tr><th>Rule</th><th>Signal</th><th>Matched</th><th>Weight</th><th>Severity</th><th>Evidence</th></tr></thead>
+      <thead><tr><th>Rule</th><th>Signal</th><th>Status</th><th class="num">Weight</th><th>Severity</th><th>Evidence</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
@@ -483,7 +505,7 @@ function renderIocs(c) {
     .join("");
   if (hashRows) {
     $("#view-iocs").innerHTML += `
-      <h3 style="margin-top:18px">Attachment hashes</h3>
+      <h3>Attachment hashes</h3>
       <table><thead><tr><th>File</th><th>Type</th><th>SHA-256</th><th>MD5</th></tr></thead><tbody>${hashRows}</tbody></table>`;
   }
 }
@@ -500,7 +522,7 @@ function renderEnrichment(c) {
         <td class="mono">${esc(r.provider)}</td>
         <td class="mono">${esc(defang(r.indicator))}</td>
         <td><span class="chip ${esc(r.verdict)}">${esc(r.verdict)}</span></td>
-        <td class="mono">${r.score ?? "—"}</td>
+        <td class="mono num">${r.score ?? "—"}</td>
         <td>${esc(r.summary)}</td>
         <td>${r.offline ? "local" : "live"}${r.reference ? ` · <a href="${esc(r.reference)}" target="_blank" rel="noopener">ref</a>` : ""}</td>
       </tr>`
@@ -513,10 +535,10 @@ function renderEnrichment(c) {
       ${esc(en.indicators_checked)} indicator(s) checked in ${esc(en.duration_ms)} ms
     </div>
     ${skipped ? `<h3>Providers skipped</h3><ul class="reasoning">${skipped}</ul>` : ""}
-    <h3 style="margin-top:16px">Results</h3>
+    <h3>Results</h3>
     ${
       rows
-        ? `<table><thead><tr><th>Provider</th><th>Indicator</th><th>Verdict</th><th>Score</th><th>Summary</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>`
+        ? `<table><thead><tr><th>Provider</th><th>Indicator</th><th>Verdict</th><th class="num">Score</th><th>Summary</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>`
         : `<p class="hint">No enrichment performed.</p>`
     }`;
 }
@@ -525,21 +547,22 @@ function renderTimeline(c) {
   const rows = (c.timeline || [])
     .map(
       (t, idx) => `<tr>
-        <td>${idx + 1}</td>
+        <td class="mono num">${idx + 1}</td>
         <td class="mono">${esc(t.stage)}</td>
         <td class="mono">${esc(new Date(t.started_at).toLocaleTimeString())}</td>
-        <td class="mono">${esc(t.duration_ms)} ms</td>
+        <td class="mono num">${esc(t.duration_ms)} ms</td>
         <td>${esc(t.detail)}</td>
       </tr>`
     )
     .join("");
   const m = c.metrics;
   $("#view-timeline").innerHTML = `
-    <table><thead><tr><th>#</th><th>Stage</th><th>Started</th><th>Duration</th><th>Detail</th></tr></thead>
+    <h3>Stage timings</h3>
+    <table><thead><tr><th class="num">#</th><th>Stage</th><th>Started</th><th class="num">Duration</th><th>Detail</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    <div class="callout" style="margin-top:16px">
+    <div class="callout" style="margin-top:18px">
       Total <strong>${esc(m.total_ms)} ms</strong> automated vs.
-      <strong>${esc(m.baseline_minutes)} min</strong> manual baseline — approximately
+      <strong>${esc(m.baseline_minutes)} min</strong> manual baseline &mdash; approximately
       <strong>${esc(Math.round(m.minutes_saved))} minutes saved</strong> on this case.
     </div>`;
 }
@@ -548,8 +571,7 @@ function renderReport(c) {
   $("#view-report").innerHTML = `
     <div class="copybar">
       <button class="ghost" id="copy-report">Copy Markdown</button>
-      <a class="ghost" style="text-decoration:none;padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted)"
-         href="/api/cases/${encodeURIComponent(c.id)}/report" target="_blank" rel="noopener">Open raw</a>
+      <a class="ghost" href="/api/cases/${encodeURIComponent(c.id)}/report" target="_blank" rel="noopener">Open raw</a>
     </div>
     <article class="md">${md(c.report_markdown)}</article>`;
   $("#copy-report").addEventListener("click", async () => {
@@ -605,6 +627,18 @@ function init() {
   dz.addEventListener("drop", (e) => runUpload(e.dataTransfer.files[0]));
 
   $("#run-paste").addEventListener("click", runRaw);
+
+  /* Empty-state shortcuts */
+  $("#empty-sample").addEventListener("click", () => {
+    const name = state.samples[0];
+    if (!name) { showError("Samples are still loading — try again in a moment."); return; }
+    runSample(name);
+  });
+  $("#empty-upload").addEventListener("click", () => {
+    const tab = $('#intake-tabs .tab[data-pane="upload"]');
+    if (tab) tab.click();
+    $("#file-input").click();
+  });
 
   let searchTimer;
   $("#case-search").addEventListener("input", (e) => {
