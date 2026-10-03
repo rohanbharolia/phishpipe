@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phishpipe"
+version = "1.0.0"
+description = "Automated phishing investigation pipeline: ingest, extract, enrich, score, case, report, notify."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "SOC Engineering" }]
+keywords = ["phishing", "soc", "siem", "soar", "threat-intel", "mitre-attack"]
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.29,<1.0",
+    "python-multipart>=0.0.9,<1.0",
+    "pydantic>=2.6,<3.0",
+    "PyYAML>=6.0,<7.0",
+    "requests>=2.31,<3.0",
+]
+
+[project.optional-dependencies]
+msg = ["extract_msg>=0.29"]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+phishpipe = "phishpipe.cli:main"
+
+[tool.setuptools]
+packages = ["phishpipe"]
+
+[tool.setuptools.package-data]
+phishpipe = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

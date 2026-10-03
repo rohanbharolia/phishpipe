@@ -1,0 +1,36 @@
+Received: from mail.yourcompany.com (mail.yourcompany.com [198.51.100.24])
+	by mx01.yourcompany.com with ESMTPS id 9AbCdEfGh1
+	for <jane.doe@yourcompany.com>; Wed, 30 Sep 2026 16:02:11 +0000 (UTC)
+Authentication-Results: mx01.yourcompany.com;
+	spf=pass smtp.mailfrom=yourcompany.com;
+	dkim=pass header.d=yourcompany.com header.s=selector1;
+	dmarc=pass header.from=yourcompany.com
+Received-SPF: pass (mx01.yourcompany.com: domain of yourcompany.com designates 198.51.100.24 as permitted sender)
+DKIM-Signature: v=1; a=rsa-sha256; d=yourcompany.com; s=selector1; c=relaxed/relaxed
+Return-Path: <it-helpdesk@yourcompany.com>
+From: IT Helpdesk <it-helpdesk@yourcompany.com>
+To: Jane Doe <jane.doe@yourcompany.com>
+Subject: Scheduled network maintenance this weekend - no action required
+Date: Wed, 30 Sep 2026 16:02:09 +0000
+Message-ID: <20260930160209.1a2b3c4d@yourcompany.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+X-Mailer: Microsoft Outlook 16.0
+
+Hello Jane,
+
+Just a heads up that the infrastructure team will be carrying out scheduled
+maintenance on the corporate network this Saturday between 22:00 and 02:00 UTC.
+
+During that window you may notice brief interruptions to file shares and the
+intranet. VPN access will remain available throughout. Full details and the
+change ticket are on the maintenance page:
+
+  https://intranet.yourcompany.com/maintenance/2026-w40
+
+Nothing is required from you. If you spot anything unusual with your account
+in the meantime, reply to this message or raise a ticket on the service desk.
+
+Thanks,
+IT Helpdesk
+Your Company plc

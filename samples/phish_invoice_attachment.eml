@@ -1,0 +1,54 @@
+Received: from mx01.yourcompany.com (mx01.yourcompany.com [192.0.2.10])
+	by mx01.yourcompany.com with ESMTPS id 2ZxCvBnM03
+	for <jane.doe@yourcompany.com>; Thu, 01 Oct 2026 11:26:44 +0000 (UTC)
+Received: from vps-4471.hostcheap.cc (vps-4471.hostcheap.cc [203.0.113.7])
+	by mx01.yourcompany.com with ESMTPS id 2ZxCvBnM02
+	for <jane.doe@yourcompany.com>; Thu, 01 Oct 2026 11:26:42 +0000 (UTC)
+Authentication-Results: mx01.yourcompany.com;
+	spf=fail smtp.mailfrom=secure-notify.top;
+	dkim=none header.d=secure-notify.top;
+	dmarc=fail header.from=secure-notify.top
+Received-SPF: fail (mx01.yourcompany.com: domain of secure-notify.top does not designate 203.0.113.7 as permitted sender)
+Return-Path: <ap-invoice@secure-notify.top>
+From: Finance Department <ap-invoice@secure-notify.top>
+To: Jane Doe <jane.doe@yourcompany.com>
+Subject: Re: Q3 invoice adjustment - confirmation needed
+Date: Thu, 01 Oct 2026 11:26:40 +0000
+Message-ID: <20261001112640.9f1a2b3c@secure-notify.top>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="----=_Part_44719_61203"
+
+------=_Part_44719_61203
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Dear Customer,
+
+Please find attached the revised Q3 invoice you requested. Windows has marked
+the file as coming from the internet, so you will need to enable content to
+view the document.
+
+If the document does not open, run the attached scanner helper instead - it
+confirms your reader is up to date.
+
+Kindly confirm the figures within 24 hours so we can close the quarter.
+
+Accounts Payable
+Finance Department
+
+------=_Part_44719_61203
+Content-Type: application/vnd.ms-word.document.macroEnabled.12; name="Q3_Invoice_Adjustment.docm"
+Content-Disposition: attachment; filename="Q3_Invoice_Adjustment.docm"
+Content-Transfer-Encoding: base64
+
+UEsgZGVtbyBkb2NtIGNvbnRhaW5lciBieXRlcyBmb3Igb2ZmbGluZSBsYWIgdXNlIG9ubHk=
+
+------=_Part_44719_61203
+Content-Type: application/x-msdownload; name="backup_scan.pdf.exe"
+Content-Disposition: attachment; filename="backup_scan.pdf.exe"
+Content-Transfer-Encoding: base64
+
+TVogZmFrZSBkZW1vIHBheWxvYWQgZm9yIG9mZmxpbmUgbGFiIHVzZSBvbmx5IC0gbm90IGV4ZWN1
+dGFibGU=
+
+------=_Part_44719_61203--

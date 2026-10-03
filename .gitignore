@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.env.*
+
+# Test / tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime artifacts (regenerated on every investigation)
+data/cases.db
+data/cases.db-journal
+data/cases.db-wal
+data/cases.db-shm
+reports/*.md
+reports/*.json
+
+# Local secrets — API keys are read from environment variables only
+secrets/
+*.key
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

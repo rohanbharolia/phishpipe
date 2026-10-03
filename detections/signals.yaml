@@ -1,0 +1,687 @@
+# =============================================================================
+# PhishPipe detection logic
+# =============================================================================
+# This file IS the detection engine's rule set. It is intentionally kept as
+# data (not code) so that tuning a weight or adding a phrase list is a reviewable
+# one-line diff rather than a code change. Bump `version` on every behavioural
+# change so historical cases can be re-scored and compared.
+#
+#   signals[]   -> the weighted rules the scorer evaluates
+#   scoring{}   -> classification thresholds
+#   wordlists{} -> phrase lists, token lists and allow/deny lists used by extract
+#   mitre{}     -> ATT&CK technique catalogue referenced by signals
+# =============================================================================
+
+version: "1.0.0"
+updated: "2026-10-03"
+author: "SOC Engineering"
+description: >-
+  Weighted, explainable phishing detection rules. Every signal contributes a
+  signed weight; the sum is clamped to 0-100 to produce the confidence score.
+
+scoring:
+  true_positive_threshold: 70   # confidence >= this  -> true positive
+  suspicious_threshold: 30      # confidence >= this  -> suspicious, else false positive
+  critical_severity_threshold: 90
+  high_severity_threshold: 70
+  medium_severity_threshold: 40
+  low_severity_threshold: 15
+  # A single critical signal forces escalation regardless of total score.
+  critical_signal_auto_escalate: true
+
+# -----------------------------------------------------------------------------
+# Signal catalogue
+# -----------------------------------------------------------------------------
+signals:
+
+  # --- Authentication -------------------------------------------------------
+  - id: auth.spf_fail
+    title: SPF check failed
+    description: The sending IP is not authorised by the domain's SPF record.
+    weight: 10
+    severity: medium
+    category: auth
+    techniques: [T1566]
+
+  - id: auth.dkim_fail
+    title: DKIM signature invalid
+    description: The message did not cryptographically verify against the sender domain.
+    weight: 10
+    severity: medium
+    category: auth
+    techniques: [T1566]
+
+  - id: auth.dmarc_fail
+    title: DMARC evaluation failed
+    description: Neither SPF nor DKIM passed DMARC alignment for the From domain.
+    weight: 15
+    severity: high
+    category: auth
+    techniques: [T1566, T1598]
+
+  - id: auth.dmarc_none
+    title: DMARC not enforced
+    description: DMARC result is 'none' - the domain publishes no enforcement policy.
+    weight: 5
+    severity: low
+    category: auth
+    techniques: [T1566]
+
+  - id: auth.missing_results
+    title: No authentication results present
+    description: The message carries no SPF/DKIM/DMARC evaluation, so trust cannot be established.
+    weight: 3
+    severity: info
+    category: auth
+    techniques: [T1566]
+
+  - id: auth.alignment_fail
+    title: Authentication passes but DMARC is unaligned
+    description: SPF and/or DKIM passed yet the identifiers do not align with the visible From domain.
+    weight: 8
+    severity: medium
+    category: auth
+    techniques: [T1566]
+
+  - id: auth.all_pass_aligned
+    title: SPF, DKIM and DMARC all pass
+    description: Full authentication chain verified and aligned - a strong mitigating factor.
+    weight: -20
+    severity: info
+    category: auth
+    techniques: []
+
+  # --- Envelope / headers ---------------------------------------------------
+  - id: header.return_path_mismatch
+    title: Return-Path differs from From domain
+    description: The bounce domain does not match the displayed sender domain.
+    weight: 10
+    severity: medium
+    category: header
+    techniques: [T1566]
+
+  - id: header.reply_to_mismatch
+    title: Reply-To redirects to an unrelated domain
+    description: Replies are steered to a domain that is not the sender's.
+    weight: 8
+    severity: medium
+    category: header
+    techniques: [T1566]
+
+  - id: header.foreign_origin
+    title: Message originates outside the expected mail path
+    description: The first Received hop originates from an IP that does not belong to the sender domain.
+    weight: 6
+    severity: low
+    category: header
+    techniques: [T1566]
+
+  - id: header.suspicious_mailer
+    title: Unrecognised or spoofed mailer header
+    description: X-Mailer / User-Agent is absent or inconsistent with the claimed sending platform.
+    weight: 4
+    severity: low
+    category: header
+    techniques: [T1566]
+
+  # --- Sender identity ------------------------------------------------------
+  - id: identity.display_name_spoof
+    title: Display name impersonates a known brand or person
+    description: The friendly-from name claims an identity the sending domain cannot substantiate.
+    weight: 15
+    severity: high
+    category: identity
+    techniques: [T1566, T1598]
+
+  - id: identity.brand_impersonation
+    title: Brand impersonation detected
+    description: The message imitates a well-known brand outside the sender's own domain.
+    weight: 15
+    severity: high
+    category: identity
+    techniques: [T1566, T1598]
+
+  - id: identity.allowlisted_sender
+    title: Sender is on the internal allow-list
+    description: Sender domain is explicitly trusted by policy; strong mitigating factor.
+    weight: -30
+    severity: info
+    category: identity
+    techniques: []
+
+  - id: identity.unknown_sender
+    title: Sender domain is unknown to the organisation
+    description: First-seen external domain with no prior history.
+    weight: 3
+    severity: info
+    category: identity
+    techniques: [T1566]
+
+  # --- Content --------------------------------------------------------------
+  - id: content.urgency
+    title: Urgency or deadline language
+    description: Pressures the recipient to act immediately without verification.
+    weight: 8
+    severity: medium
+    category: content
+    techniques: [T1566]
+
+  - id: content.threat
+    title: Threat of consequence
+    description: Threatens account suspension, legal action or financial loss.
+    weight: 12
+    severity: high
+    category: content
+    techniques: [T1566]
+
+  - id: content.sensitive_request
+    title: Requests credentials or sensitive data
+    description: Asks the recipient to disclose a password, MFA code, card or SSN.
+    weight: 12
+    severity: high
+    category: content
+    techniques: [T1566, T1598]
+
+  - id: content.credential_harvest_url
+    title: Credential-harvesting URL pattern
+    description: Link path contains authentication bait tokens such as login, verify or unlock.
+    weight: 12
+    severity: high
+    category: content
+    techniques: [T1566.002]
+
+  - id: content.mismatched_link
+    title: Link text does not match its destination
+    description: Anchor text advertises one site while the href points somewhere else.
+    weight: 15
+    severity: critical
+    category: content
+    techniques: [T1566.002, T1204.001]
+
+  - id: content.ip_based_link
+    title: Link points at a raw IP address
+    description: URL host is a literal IP rather than a domain, a strong phishing indicator.
+    weight: 15
+    severity: high
+    category: content
+    techniques: [T1566.002]
+
+  - id: content.url_shortener
+    title: Redirector or URL shortener used
+    description: Destination is hidden behind a link shortener or open redirect.
+    weight: 6
+    severity: medium
+    category: content
+    techniques: [T1566.002]
+
+  - id: content.suspicious_tld
+    title: Suspicious top-level or domain suffix
+    description: Domain uses a TLD frequently abused for disposable phishing infrastructure.
+    weight: 6
+    severity: medium
+    category: content
+    techniques: [T1566.002]
+
+  - id: content.punycode
+    title: Punycode / homoglyph domain
+    description: Internationalised domain that visually imitates a legitimate brand.
+    weight: 10
+    severity: medium
+    category: content
+    techniques: [T1566.002]
+
+  - id: content.generic_greeting
+    title: Generic or absent greeting
+    description: Greets the recipient as "Dear customer" rather than by name.
+    weight: 4
+    severity: low
+    category: content
+    techniques: [T1566]
+
+  - id: content.macro_instruction
+    title: Instructs the recipient to enable macros
+    description: Body tells the user to enable content or macros to view the document.
+    weight: 14
+    severity: high
+    category: content
+    techniques: [T1566.001, T1204.002]
+
+  - id: content.no_suspicious_elements
+    title: No suspicious content detected
+    description: Body, links and headers show none of the tracked phishing patterns.
+    weight: -15
+    severity: info
+    category: content
+    techniques: []
+
+  # --- Attachments ----------------------------------------------------------
+  - id: attach.suspicious_extension
+    title: Dangerous attachment type
+    description: Executable, script or disk-image payload attached to the message.
+    weight: 20
+    severity: critical
+    category: attachment
+    techniques: [T1566.001, T1204.002]
+
+  - id: attach.double_extension
+    title: Disguised double extension
+    description: Attachment abuses a double extension such as invoice.pdf.exe.
+    weight: 20
+    severity: critical
+    category: attachment
+    techniques: [T1566.001, T1204.002]
+
+  - id: attach.macro_enabled
+    title: Macro-enabled document
+    description: Office macro or template document capable of executing code.
+    weight: 15
+    severity: high
+    category: attachment
+    techniques: [T1566.001, T1204.002]
+
+  - id: attach.password_protected_hint
+    title: Password-protected archive referenced
+    description: Message supplies a password to open the attachment, defeating sandbox scanning.
+    weight: 10
+    severity: medium
+    category: attachment
+    techniques: [T1566.001]
+
+  - id: attach.content_type_mismatch
+    title: Attachment content type does not match its name
+    description: Declared MIME type contradicts the file extension.
+    weight: 8
+    severity: medium
+    category: attachment
+    techniques: [T1566.001]
+
+  - id: attach.unexpected
+    title: Unexpected attachment for this sender
+    description: Attachment present from an external sender with no business context.
+    weight: 8
+    severity: medium
+    category: attachment
+    techniques: [T1566.001]
+
+  # --- Enrichment -----------------------------------------------------------
+  - id: enrich.malicious
+    title: Reputation service reports malicious
+    description: One or more enrichment providers classified an indicator as malicious.
+    weight: 25
+    severity: critical
+    category: enrichment
+    techniques: [T1566]
+
+  - id: enrich.suspicious
+    title: Reputation service reports suspicious
+    description: Enrichment providers flagged an indicator as suspicious but not confirmed malicious.
+    weight: 12
+    severity: high
+    category: enrichment
+    techniques: [T1566]
+
+  - id: enrich.all_clean
+    title: All enriched indicators are clean
+    description: Every checked indicator returned a clean verdict from an authoritative source.
+    weight: -10
+    severity: info
+    category: enrichment
+    techniques: []
+
+  # --- Safeguards -----------------------------------------------------------
+  - id: guard.needs_human_review
+    title: Escalated for human review
+    description: Score is inconclusive or a critical signal fired; a human must confirm.
+    weight: 0
+    severity: info
+    category: guardrail
+    techniques: []
+
+# -----------------------------------------------------------------------------
+# Word lists consumed by the extraction stage
+# -----------------------------------------------------------------------------
+wordlists:
+
+  urgency:
+    - "act now"
+    - "immediately"
+    - "urgent"
+    - "within 24 hours"
+    - "within 24 hrs"
+    - "expires today"
+    - "expires soon"
+    - "last chance"
+    - "time-sensitive"
+    - "do not delay"
+    - "as soon as possible"
+    - "prompt action required"
+    - "respond immediately"
+    - "final notice"
+    - "before it is too late"
+    - "suspended within"
+
+  threats:
+    - "account will be suspended"
+    - "account has been suspended"
+    - "account suspended"
+    - "will be closed"
+    - "will be terminated"
+    - "legal action"
+    - "unauthorised activity"
+    - "unauthorized activity"
+    - "suspected fraud"
+    - "your account is restricted"
+    - "failure to comply"
+    - "overdue invoice"
+    - "outstanding balance"
+    - "warrant has been issued"
+    - "collection agency"
+
+  sensitive_requests:
+    - "verify your password"
+    - "confirm your password"
+    - "enter your password"
+    - "your password"
+    - "reset your password"
+    - "verify your identity"
+    - "social security number"
+    - "credit card number"
+    - "one-time code"
+    - "otp code"
+    - "2fa code"
+    - "mfa code"
+    - "bank details"
+    - "confirm your account details"
+    - "update your payment"
+
+  credential_url_tokens:
+    - "login"
+    - "logon"
+    - "signin"
+    - "sign-in"
+    - "verify"
+    - "verification"
+    - "secure"
+    - "account"
+    - "auth"
+    - "authenticate"
+    - "unlock"
+    - "password"
+    - "reset"
+    - "update"
+    - "confirm"
+    - "billing"
+    - "wallet"
+    - "sso"
+    - "oauth"
+
+  macro_instructions:
+    - "enable content"
+    - "enable editing"
+    - "enable macros"
+    - "enable running of macros"
+    - "click enable editing"
+    - "update to view"
+    - "enable the macro"
+    - "compile"
+
+  generic_greetings:
+    - "dear customer"
+    - "dear user"
+    - "dear valued customer"
+    - "dear member"
+    - "dear sir"
+    - "dear sir/madam"
+    - "dear user,"
+    - "to whom it may concern"
+    - "dear account holder"
+
+  # X-Mailer values commonly emitted by bulk mailers and phishing kits.
+  suspicious_mailers:
+    - "phpmailer"
+    - "the bat!"
+    - "groupmail"
+    - "advanced emailer"
+    - "sendblaster"
+    - "email detective"
+    - "mail bomb"
+    - "gammadyne mailer"
+    - "sparkpost"
+
+  # Top-level domains and suffixes that dominate disposable phishing kits.
+  suspicious_tlds:
+    - ".xyz"
+    - ".top"
+    - ".icu"
+    - ".cfd"
+    - ".shop"
+    - ".click"
+    - ".live"
+    - ".buzz"
+    - ".monster"
+    - ".rest"
+    - ".bond"
+    - ".sbs"
+    - ".cyou"
+    - ".tk"
+    - ".ml"
+    - ".ga"
+    - ".cf"
+    - ".gq"
+    - ".zip"
+    - ".mov"
+
+  url_shorteners:
+    - "bit.ly"
+    - "tinyurl.com"
+    - "t.co"
+    - "goo.gl"
+    - "is.gd"
+    - "ow.ly"
+    - "buff.ly"
+    - "cutt.ly"
+    - "rb.gy"
+    - "shorturl.at"
+    - "t.ly"
+    - "rebrand.ly"
+    - "s.id"
+    - "v.gd"
+    - "bl.ink"
+    - "soo.gd"
+    - "doiop.com"
+
+  # Known-good sending domains. A match suppresses the score strongly.
+  allowlist_domains:
+    - "example.com"
+    - "yourcompany.com"
+    - "localhost"
+
+  # Internal corporate domains - a message claiming to be internal but sent
+  # from elsewhere is a strong impersonation signal.
+  internal_domains: []
+
+  # Brands most frequently impersonated in credential-harvest campaigns.
+  brands:
+    - microsoft
+    - outlook
+    - office365
+    - office 365
+    - onedrive
+    - sharepoint
+    - teams
+    - apple
+    - icloud
+    - amazon
+    - paypal
+    - netflix
+    - google
+    - gmail
+    - drive
+    - dropbox
+    - docusign
+    - adobe
+    - linkedin
+    - github
+    - slack
+    - zoom
+    - whatsapp
+    - facebook
+    - instagram
+    - coinbase
+    - binance
+    - kraken
+    - chase
+    - bank of america
+    - wells fargo
+    - citibank
+    - hmrc
+    - irs
+    - dhl
+    - fedex
+    - ups
+    - cdpr
+
+  # Official domains each brand legitimately sends from. This is what separates
+  # "Microsoft wrote to you" from "someone claiming to be Microsoft wrote to
+  # you" - a typosquat such as secure-login-microsoft365.xyz contains the brand
+  # name but is not one of these domains, so it still scores as impersonation.
+  brand_domains:
+    microsoft: [microsoft.com, office.com, office365.com, live.com, outlook.com, sharepoint.com, onedrive.com, azure.com, windows.com, microsoftonline.com, msauth.net, msftauth.net]
+    outlook: [outlook.com, office.com, office365.com, live.com]
+    office365: [office365.com, office.com, microsoft.com, microsoftonline.com]
+    onedrive: [onedrive.com, live.com, microsoft.com]
+    sharepoint: [sharepoint.com, microsoft.com, office.com]
+    teams: [microsoft.com, office.com, teams.microsoft.com]
+    apple: [apple.com, icloud.com]
+    icloud: [icloud.com, apple.com]
+    amazon: [amazon.com, amazonaws.com]
+    paypal: [paypal.com]
+    netflix: [netflix.com]
+    google: [google.com, gmail.com, youtube.com, googlemail.com, gstatic.com]
+    gmail: [gmail.com, google.com]
+    drive: [google.com, drive.google.com]
+    dropbox: [dropbox.com]
+    docusign: [docusign.com, docusign.net]
+    adobe: [adobe.com, adobesign.com]
+    linkedin: [linkedin.com]
+    github: [github.com]
+    slack: [slack.com]
+    zoom: [zoom.us]
+    whatsapp: [whatsapp.com]
+    facebook: [facebook.com]
+    instagram: [instagram.com]
+    coinbase: [coinbase.com]
+    binance: [binance.com]
+    kraken: [kraken.com]
+    chase: [chase.com]
+    bank of america: [bankofamerica.com]
+    wells fargo: [wellsfargo.com]
+    citibank: [citi.com]
+    hmrc: [gov.uk, hmrc.gov.uk]
+    irs: [irs.gov]
+    dhl: [dhl.com, dhl.de, dhl.co.uk]
+    fedex: [fedex.com]
+    ups: [ups.com]
+    cdpr: [cdprojekt.com, cdprojektred.com]
+
+  dangerous_extensions:
+    - ".exe"
+    - ".scr"
+    - ".pif"
+    - ".com"
+    - ".bat"
+    - ".cmd"
+    - ".ps1"
+    - ".vbs"
+    - ".vbe"
+    - ".js"
+    - ".jse"
+    - ".wsf"
+    - ".hta"
+    - ".jar"
+    - ".msi"
+    - ".dll"
+    - ".cpl"
+    - ".lnk"
+    - ".iso"
+    - ".img"
+    - ".reg"
+    - ".apk"
+
+  macro_extensions:
+    - ".docm"
+    - ".xlsm"
+    - ".pptm"
+    - ".doc"
+    - ".xls"
+    - ".dotm"
+    - ".xltm"
+    - ".rtf"
+    - ".one"
+
+  archive_extensions:
+    - ".zip"
+    - ".rar"
+    - ".7z"
+    - ".gz"
+    - ".tar"
+    - ".iso"
+
+  # Attachment types that are normal in business mail; presence alone is not a
+  # signal (they still contribute via content_type_mismatch / unexpected).
+  benign_extensions:
+    - ".pdf"
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+    - ".gif"
+    - ".txt"
+    - ".csv"
+    - ".docx"
+    - ".xlsx"
+    - ".pptx"
+
+# -----------------------------------------------------------------------------
+# MITRE ATT&CK technique catalogue
+# -----------------------------------------------------------------------------
+mitre:
+  techniques:
+    T1566:
+      name: Phishing
+      tactic: Initial Access
+    T1566.001:
+      name: Spearphishing Attachment
+      tactic: Initial Access
+    T1566.002:
+      name: Spearphishing Link
+      tactic: Initial Access
+    T1598:
+      name: Phishing for Information
+      tactic: Resource Development
+    T1598.003:
+      name: Spearphishing Link
+      tactic: Resource Development
+    T1204:
+      name: User Execution
+      tactic: Execution
+    T1204.001:
+      name: Malicious Link
+      tactic: Execution
+    T1204.002:
+      name: Malicious File
+      tactic: Execution
+    T1534:
+      name: Internal Spearphishing
+      tactic: Initial Access
+    T1556:
+      name: Modify Authentication Process
+      tactic: Credential Access
+    T1556.006:
+      name: Multi-Factor Authentication Interception
+      tactic: Credential Access
+    T1598.001:
+      name: Spearphishing via Service
+      tactic: Resource Development
+    T1078:
+      name: Valid Accounts
+      tactic: Persistence

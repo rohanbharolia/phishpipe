@@ -1,0 +1,41 @@
+Received: from mx01.yourcompany.com (mx01.yourcompany.com [192.0.2.10])
+	by mx01.yourcompany.com with ESMTPS id 7QwErTyUi2
+	for <jane.doe@yourcompany.com>; Thu, 01 Oct 2026 07:41:03 +0000 (UTC)
+Received: from smtpout-b23.hivemail.co (smtpout-b23.hivemail.co [198.51.100.24])
+	by mx01.yourcompany.com with ESMTPS id 7QwErTyUi1
+	for <jane.doe@yourcompany.com>; Thu, 01 Oct 2026 07:41:01 +0000 (UTC)
+Authentication-Results: mx01.yourcompany.com;
+	spf=pass smtp.mailfrom=parcel-redelivery-dhl.click;
+	dkim=pass header.d=parcel-redelivery-dhl.click header.s=s1;
+	dmarc=pass header.from=parcel-redelivery-dhl.click
+Received-SPF: pass (mx01.yourcompany.com: domain of parcel-redelivery-dhl.click designates 198.51.100.24 as permitted sender)
+DKIM-Signature: v=1; a=rsa-sha256; d=parcel-redelivery-dhl.click; s=s1; c=relaxed/relaxed
+Return-Path: <no-reply@parcel-redelivery-dhl.click>
+From: "DHL Express" <no-reply@parcel-redelivery-dhl.click>
+To: Jane Doe <jane.doe@yourcompany.com>
+Subject: Delivery notice: shipment awaiting re-delivery instruction
+Date: Thu, 01 Oct 2026 07:40:58 +0000
+Message-ID: <20261001074058.b4c8d1e2@parcel-redelivery-dhl.click>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+X-Mailer: hivemail-relay
+
+<html>
+<body>
+<p>Dear Customer,</p>
+
+<p>Your DHL shipment could not be completed because a re-delivery charge is
+outstanding. The parcel is being held at our depot pending your instruction.</p>
+
+<p>Please review the shipment and choose a new delivery window:</p>
+
+<p><a href="https://parcel-redelivery-dhl.click/reschedule?ref=DHL9">Click here to reschedule</a></p>
+
+<p>A nominal charge of 2.99 applies for the second attempt. Once you confirm
+the slot, the courier will attempt delivery again on the next working day.</p>
+
+<p>Thank you for choosing DHL.</p>
+
+<p>DHL Customer Services</p>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PhishPipe — Automated Phishing Investigation</title>
+<link rel="stylesheet" href="/static/styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128737;</text></svg>" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">&#9989;</span>
+    <div>
+      <h1>PhishPipe</h1>
+      <p>Automated phishing investigation pipeline</p>
+    </div>
+  </div>
+  <div class="statusbar" id="statusbar">
+    <span class="badge" id="badge-mode">…</span>
+    <span class="badge" id="badge-detections">…</span>
+    <span class="badge" id="badge-llm">…</span>
+    <span class="badge" id="badge-cases">0 cases</span>
+  </div>
+</header>
+
+<section class="metrics" id="metrics" hidden></section>
+
+<main class="layout">
+
+  <!-- ============ LEFT: intake ============ -->
+  <aside class="pane intake">
+    <div class="card">
+      <h2>New investigation</h2>
+
+      <div class="tabs" id="intake-tabs">
+        <button class="tab active" data-pane="upload">Upload</button>
+        <button class="tab" data-pane="paste">Paste raw</button>
+        <button class="tab" data-pane="sample">Samples</button>
+      </div>
+
+      <div class="pane-body" data-pane="upload">
+        <label class="dropzone" id="dropzone" for="file-input">
+          <input type="file" id="file-input" accept=".eml,.msg,.txt" hidden />
+          <span class="dz-icon">&#128228;</span>
+          <strong>Drop an .eml / .msg here</strong>
+          <span>or click to browse</span>
+        </label>
+        <p class="hint" id="upload-hint">Max 25 MB. Headers, body and attachments are parsed locally.</p>
+      </div>
+
+      <div class="pane-body" data-pane="paste" hidden>
+        <textarea id="raw-input" rows="14" spellcheck="false"
+          placeholder="Paste raw RFC 5322 message here…&#10;&#10;From: &#10;To: &#10;Subject: &#10;Authentication-Results: &#10;&#10;Body text"></textarea>
+        <button class="primary" id="run-paste">Investigate pasted message</button>
+      </div>
+
+      <div class="pane-body" data-pane="sample" hidden>
+        <p class="hint">Bundled messages for demos and regression checks.</p>
+        <div id="sample-list" class="sample-list"></div>
+      </div>
+
+      <div class="progress" id="progress" hidden>
+        <div class="bar"></div>
+        <span id="progress-label">Running pipeline…</span>
+      </div>
+      <p class="error" id="error-box" hidden></p>
+    </div>
+
+    <div class="card">
+      <h2>Case queue <span class="count" id="case-count"></span></h2>
+      <input type="search" id="case-search" placeholder="Search subject, sender, title…" />
+      <div id="case-list" class="case-list"></div>
+    </div>
+  </aside>
+
+  <!-- ============ RIGHT: results ============ -->
+  <section class="pane results" id="results">
+    <div class="empty" id="empty-state">
+      <div class="empty-icon">&#128270;</div>
+      <h2>No investigation loaded</h2>
+      <p>Upload a phishing email, paste raw message source, or load one of the bundled samples to produce a full investigation package.</p>
+    </div>
+
+    <div id="case-view" hidden>
+      <div class="verdict-hero" id="verdict-hero"></div>
+
+      <div class="tabs wide" id="result-tabs">
+        <button class="tab active" data-view="summary">Summary</button>
+        <button class="tab" data-view="signals">Signals</button>
+        <button class="tab" data-view="iocs">IOCs</button>
+        <button class="tab" data-view="enrichment">Enrichment</button>
+        <button class="tab" data-view="timeline">Timeline</button>
+        <button class="tab" data-view="report">Full report</button>
+        <button class="tab" data-view="notify">User notification</button>
+      </div>
+
+      <div class="view" data-view="summary" id="view-summary"></div>
+      <div class="view" data-view="signals" id="view-signals" hidden></div>
+      <div class="view" data-view="iocs" id="view-iocs" hidden></div>
+      <div class="view" data-view="enrichment" id="view-enrichment" hidden></div>
+      <div class="view" data-view="timeline" id="view-timeline" hidden></div>
+      <div class="view" data-view="report" id="view-report" hidden></div>
+      <div class="view" data-view="notify" id="view-notify" hidden></div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>PhishPipe — offline-first triage. Indicators are shown defanged; verify against live sources before blocking.</span>
+  <a href="/docs" target="_blank" rel="noopener">API docs</a>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

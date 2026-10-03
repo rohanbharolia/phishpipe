@@ -1,0 +1,21 @@
+# Runtime dependencies for PhishPipe.
+# Install:  pip install -r requirements.txt
+#
+# Everything here is free / open-source friendly. No API keys are required to
+# run the pipeline: enrichment providers activate only when their key is present
+# in the environment (see README -> "Optional enrichment providers").
+
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+python-multipart>=0.0.9,<1.0
+pydantic>=2.6,<3.0
+PyYAML>=6.0,<7.0
+requests>=2.31,<3.0
+
+# --- Optional extras -------------------------------------------------------
+# .MSG (Outlook message) support. Install with:  pip install extract_msg
+# extract_msg>=0.29
+
+# --- Development ------------------------------------------------------------
+# pytest>=8.0
+# httpx>=0.27        # required by FastAPI TestClient

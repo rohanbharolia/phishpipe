@@ -1,0 +1,115 @@
+{
+  "$schema_note": "Local reputation cache used by the OfflineProvider. Keys are lowercased indicators (domains, IPs, hashes, email domains). Entries are a curated *demo* dataset so the pipeline can be demonstrated with zero API keys and zero outbound traffic.",
+  "version": "1.0.0",
+  "updated": "2026-10-03",
+  "disclaimer": "Entries below are illustrative indicators chosen for this lab. They are not a substitute for a live threat-intelligence feed. Configure VT_API_KEY / URLSCAN_API_KEY / ABUSEIPDB_API_KEY for current reputation data.",
+  "entries": {
+    "secure-login-microsoft365.xyz": {
+      "verdict": "malicious",
+      "score": 96,
+      "category": "phishing kit",
+      "campaign": "M365 credential harvest",
+      "note": "Registrable domain hosting an Office 365 clone; no legitimate affiliation",
+      "first_seen": "2026-08-19",
+      "reference": "https://www.phishtank.com/"
+    },
+    "microsoft365-secure-portal.xyz": {
+      "verdict": "malicious",
+      "score": 94,
+      "category": "phishing kit",
+      "campaign": "M365 credential harvest",
+      "note": "Typosquat of Microsoft portal used as landing page",
+      "first_seen": "2026-08-21",
+      "reference": "https://www.phishtank.com/"
+    },
+    "185.234.72.19": {
+      "verdict": "malicious",
+      "score": 88,
+      "category": "command and control",
+      "campaign": "credential relay",
+      "note": "Short-lived VPS repeatedly reported for hosting credential relays",
+      "first_seen": "2026-07-02",
+      "reference": "https://www.abuseipdb.com/"
+    },
+    "accounts-security-verify.top": {
+      "verdict": "malicious",
+      "score": 91,
+      "category": "phishing kit",
+      "campaign": "generic credential harvest",
+      "note": "Disposable domain, 4-day registration, impersonates multiple brands",
+      "first_seen": "2026-09-30"
+    },
+    "parcel-redelivery-dhl.click": {
+      "verdict": "malicious",
+      "score": 87,
+      "category": "phishing kit",
+      "campaign": "DHL redelivery scam",
+      "note": "Fake courier redelivery page requesting card details",
+      "first_seen": "2026-09-11"
+    },
+    "docu-sign-secureview.live": {
+      "verdict": "malicious",
+      "score": 92,
+      "category": "phishing kit",
+      "campaign": "DocuSign credential harvest",
+      "note": "Brand impersonation landing page",
+      "first_seen": "2026-06-27"
+    },
+    "invoice-parcel-2026.zip": {
+      "verdict": "suspicious",
+      "score": 62,
+      "category": "malware delivery",
+      "campaign": "attachment loader",
+      "note": "Password-protected archive referenced by invoice lures",
+      "first_seen": "2026-09-02"
+    },
+    "malware-bazaar-demo-sample": {
+      "verdict": "malicious",
+      "score": 97,
+      "category": "trojan",
+      "campaign": "n/a",
+      "note": "Known-bad demo hash used for offline testing of the hash enrichment path",
+      "reference": "https://bazaar.abuse.ch/"
+    },
+
+    "microsoft.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "office.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "office365.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "portal.office.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Genuine Microsoft 365 portal" },
+    "outlook.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "google.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "gmail.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate mail provider" },
+    "paypal.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "amazon.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "apple.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "dhl.com": { "verdict": "clean", "score": 0, "category": "courier", "note": "Legitimate courier domain" },
+    "dhl.de": { "verdict": "clean", "score": 0, "category": "courier", "note": "Legitimate courier domain" },
+    "github.com": { "verdict": "clean", "score": 0, "category": "vendor", "note": "Legitimate vendor domain" },
+    "yourcompany.com": {
+      "verdict": "clean",
+      "score": 0,
+      "category": "internal",
+      "note": "Internal corporate domain used as the allow-list entry for this lab"
+    },
+    "example.com": { "verdict": "clean", "score": 0, "category": "internal", "note": "RFC 2606 reserved domain" },
+
+    "192.0.2.10": {
+      "verdict": "clean",
+      "score": 0,
+      "category": "documentation",
+      "note": "TEST-NET-1 (RFC 5737) address, never routable"
+    },
+    "198.51.100.24": {
+      "verdict": "clean",
+      "score": 0,
+      "category": "documentation",
+      "note": "TEST-NET-2 (RFC 5737) address, never routable"
+    },
+    "203.0.113.7": {
+      "verdict": "clean",
+      "score": 0,
+      "category": "documentation",
+      "note": "TEST-NET-3 (RFC 5737) address, never routable"
+    }
+  }
+}
