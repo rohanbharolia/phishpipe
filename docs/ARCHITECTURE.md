@@ -9,8 +9,8 @@
 | Goal | How the architecture delivers it |
 | --- | --- |
 | **Offline-first** | Every stage has a local implementation; network enrichment is layered on top, never required. |
-| **Never fail or hang without keys** | Providers are discovered lazily from env vars, wrapped in timeouts + a circuit breaker, and each returns a structured `ProviderResult` even on error. |
-| **Tunable without redeploys** | Detection logic is a data file (`detections/signals.yaml`), loaded and hot-reloadable, versioned in Git. |
+| **Never fail or hang without keys** | Providers are discovered from env vars, use short timeouts with no retries, and each returns a structured `EnrichmentResult` even on error. |
+| **Tunable without redeploys** | Detection logic is a data file (`detections/signals.yaml`), cached on `(path, mtime)` so edits are picked up on reload, versioned in Git. |
 | **Explainable** | The analyzer emits per-signal contributions and a plain-English narrative alongside the numeric score. |
 | **Analyst-in-the-loop** | The pipeline *recommends*; it never auto-closes. Cases persist to SQLite for human triage. |
 
@@ -21,7 +21,7 @@
 ```
             ┌──────────────────────────────────────────────────────────┐
             │                     api/main.py (FastAPI)               │
-            │   /investigate/upload · /investigate/raw · /cases/...    │
+            │   /api/investigate/upload · /api/investigate/raw · /api/cases/...  │
             └────────────────────────────┬─────────────────────────────┘
                                          │  Pipeline.run(RawEmail)
                                          ▼
@@ -36,8 +36,8 @@
 ```
 
 Each stage is a pure-ish function over typed models (`phishpipe/models.py`) and records a
-duration; the pipeline returns stage timings so the UI and `/api/status` can show where
-time is spent.
+duration; the report's *Investigation timeline* section shows per-stage timings so the
+analyst can see where time is spent.
 
 ---
 
@@ -45,49 +45,66 @@ time is spent.
 
 ### 3.1 Ingest — `phishpipe/ingest.py`
 
-Input: bytes or text. Output: a normalized `Message`.
+Input: bytes or text. Output: a normalized `ParsedEmail`.
 
 - Auto-detects format: full RFC822 (`email` stdlib parser), headers-only dump, or bare HTML/plain body.
 - Parses `From`, `Reply-To`, `Return-Path`, `Subject`, `Date`, `Message-ID`, `Received` chain.
 - Resolves the **displayed sender** vs the **actual envelope/mail-from** — the classic phishing tell.
-- Tolerates malformed MIME (defects are recorded, not raised) and mixed encodings.
+- Uses the stdlib `email` parser (`policy=compat32`), which tolerates malformed MIME and mixed encodings instead of raising.
 
 ### 3.2 Extract — `phishpipe/extract.py`
 
-Produces `Finding` objects, each carrying `category`, `value`, `evidence`, `weight_source`.
+Produces the two structures the scorer consumes:
 
-- **URLs** — defanged (`hxxp://`, `[.]`, `(.)`) and raw forms, deduped, host-normalized.
-- **Domains / IPs** — registrable domain extraction, punycode detection, IP-literal hosts.
-- **Attachments** — filename, declared MIME, sniffed MIME (magic bytes), size, extension-chain analysis.
-- **Brand impersonation** — match against `brand_domains` wordlist, then confirm the sender is *not* the official domain via `_is_official_brand_sender()`. Suppressed for allow-listed/internal senders.
+- `list[Indicator]` (`models.py`) — `{type, value, source, context}` for url / domain /
+  ip / email / hash / attachment / phone, each with a defanging property.
+- `ContentProfile` (`extract.py`) — everything the scorer reasons about: urgency / threat
+  / sensitive-request / macro-instruction hits, generic-greeting hit, brands mentioned,
+  links (with anchor text), attachments (filename, declared MIME, size, extension
+  chain), sender / reply-to / return-path / origin domains, display-name spoofing, brand
+  impersonation, allow-list state, suspicious TLDs, shorteners, IP links, mismatched
+  links, credential-harvest URLs, punycode.
+
+Also extracts:
+
 - **Authentication results** — SPF / DKIM / DMARC parsed from `Authentication-Results` and evaluated locally.
-- **Urgency / threat language** — keyword match against the ruleset wordlist.
-- **Thread position** — is this a cold-open reply, a reply-injected message, or a new thread.
+- **Received chain** — hops, originating IP/HELO, first-received timestamp (`build_received_chain`).
+- **Brand impersonation** — match against the `brand_domains` wordlist, then confirm the sender is *not* the official domain via `_is_official_brand_sender()`. Suppressed for allow-listed/internal senders.
 - **Host sanity** — Python 3.12 `urlparse` can raise `ValueError` on bracketed IPv4 (`http://[1.2.3.4]/`), so `_manual_host()` provides a regex fallback.
 
 ### 3.3 Enrich — `phishpipe/enrich.py`
 
-Pluggable provider registry. Provider contract:
+Pluggable provider registry. Provider contract (`EnrichmentProvider` ABC):
 
 ```python
-class Provider(Protocol):
+class EnrichmentProvider(ABC):
     name: str
-    def available(self) -> bool: ...          # env key present?
-    def enrich(self, target, kind) -> ProviderResult: ...
+    kind: str                      # "reputation" (HTTP) | "local" (offline)
+
+    @abstractmethod
+    def is_available(self) -> tuple[bool, str]: ...
+        # (available, reason_when_not) - False when the env key is absent
+
+    @abstractmethod
+    def lookup(self, indicator: Indicator) -> EnrichmentResult: ...
+        # verdict for one indicator. Must never raise.
 ```
 
 Hard rules enforced by the base class:
 
-1. `available()` returns `False` when the key is absent → the provider is **skipped**, not errored.
-2. Every call is wrapped in a **timeout**; failures increment a **circuit breaker**, after which the provider is skipped for the remainder of the run.
-3. Exceptions are caught and converted to `ProviderResult(ok=False, reason=...)`.
-4. Results always land in `enrichment.results_offline_only` or `results_live` — the UI badge reads this, so a "LIVE PROVIDERS" label can never be a lie.
+1. `is_available()` returns `(False, "missing VT_API_KEY environment variable")` when the key is absent → the provider is **skipped**, not errored.
+2. Network calls use a short explicit `timeout` and **no retries**, so an enrichment step can never hang an investigation.
+3. Exceptions are caught and converted to an `EnrichmentResult` with an `error` field — the provider must never break the pipeline.
+4. Every result carries `offline: bool`, and the bundle carries `providers_used` / `providers_skipped` — the UI badge reads these, so an "offline only" label can never be a lie.
 
 **Offline verdict dataset** (`data/offline_verdicts.json`):
 
-- SHA-256 hashed URL keys for exact matches (privacy-preserving, no raw URL stored).
-- Curated known-bad and known-good domain lists.
-- Heuristic scoring for anything not in the dataset: punycode, dynamic-DNS, IP hosts, `@`-obfuscation, homoglyph characters, excessive subdomains.
+- Keys are **lowercased indicators** (domains, IPs, hashes, email domains) with a curated
+  `{verdict, score, category, campaign}` entry each.
+- Curated known-bad and known-good entries so demos run with zero outbound traffic.
+- Deterministic structural heuristics for anything not in the dataset: punycode,
+  dynamic-DNS, IP hosts, `@`-obfuscation, homoglyph characters, excessive subdomains.
+- Ships with a disclaimer that it is a demo dataset, not a threat-intel feed.
 
 ### 3.4 Analyze — `phishpipe/detections.py` + `analyze.py`
 
@@ -96,30 +113,44 @@ The heart of the system. Rules live in `detections/signals.yaml`:
 ```yaml
 version: "1.0.0"
 scoring:
-  base: 0
-  clamp: [0, 100]
-  thresholds: { info: 0, low: 35, medium: 55, high: 75, critical: 90 }
+  true_positive_threshold: 70    # confidence >= this -> true positive
+  suspicious_threshold: 30       # >= this -> suspicious, else false positive
+  critical_severity_threshold: 90
+  high_severity_threshold: 70
+  medium_severity_threshold: 40
+  low_severity_threshold: 15
+  critical_signal_auto_escalate: true
+
 signals:
-  credential_harvest_url:
-    weight: 25
+  - id: content.credential_harvest_url
+    title: Credential-harvesting URL pattern
+    weight: 12
+    severity: high
     category: content
-    description: "URL points at a credential-harvesting path or lookalike host"
+    techniques: [T1566.002]
 ```
 
 **Scoring model — weighted additive, clamped:**
 
 ```
-score = clamp( Σ weight(signal fired) + Σ Δ(weight from enrichment) , 0, 100 )
+score = clamp( Σ weight(signal matched), 0, 100 )     # analyze._confidence()
+classification = score >= 70 ? true_positive
+               : score >= 30 ? suspicious : false_positive
+severity      = band(score) via critical/high/medium/low thresholds
 ```
 
-- Only signals with a *matched* condition contribute.
-- Enrichment can **add** (reputation hit) or **subtract** (SPF+DKIM+DMARC alignment pass) weight.
+- Only signals with a *matched* condition contribute; weights are signed, so mitigating
+  factors **subtract** (e.g. `auth.all_pass_aligned` = −20, `identity.allowlisted_sender` = −30).
+- Enrichment feeds the scorer too: a reputation hit adds weight (`enrich.malicious` = +25),
+  all-clean subtracts (`enrich.all_clean` = −10).
 - The result is clamped to `[0, 100]` so stacked signals can't produce a nonsensical value.
 
 **Confidence band** derived from score thresholds, then **severity auto-escalation**:
 
 ```python
 SELF_EVIDENCE_CATEGORIES = {"content", "attachment"}
+# escalates only when a matched signal has severity == "critical"
+# and its category is self-evident AND critical_signal_auto_escalate is true
 ```
 
 Escalation to `critical` requires the driving evidence to be *self-evident* — content the
@@ -127,37 +158,44 @@ analyst can see in the message, or an attachment — **not** a third-party reput
 This is what keeps the DHL sample at `suspicious/medium/54` rather than inflating it to
 critical on the strength of a domain-list hit alone.
 
-**Explanation generation:** for each fired signal the analyzer emits
-`{signal, weight, description, matched_evidence}`, plus offsets (e.g. "passed
-SPF/DKIM/DMARC alignment, −10"), plus any escalation rationale. `narrative.py` renders
-these into the paragraph shown in the UI's *Confidence* tab.
+**Explanation generation:** for each matched signal the analyzer emits
+`{id, title, weight, severity, evidence}`, lists unmatched signals as `_not matched_`,
+and summarizes the result ("9/37 detection signals matched for a raw score of 54
+clamped to 54/100", highest-impact signals, mitigating factors, escalation rationale).
+`narrative.py` renders this into section 1 of the report and the UI's summary view.
 
 ### 3.5 Case — `phishpipe/casestore.py`
 
 SQLite (`data/cases.db`) instead of TheHive/OpenCTI — there is no Docker in this
 environment, and a local file keeps the project runnable anywhere.
 
-- Auto-increment case ID, status workflow (`new → triaged → closed`), severity, analyst notes.
-- Query filters: `status`, `severity`, free-text `q` (subject / sender / ID).
+- Prefixed, sortable case ID (`PHI-YYYYMMDD-xxxxxxxx`), status workflow
+  (`new → triaged → escalated → closed`), classification, severity, detection version.
+- Query filters: `classification`, `severity`, `status`, free-text `search`
+  (subject / sender / ID), with `limit`/`offset` paging.
 - `total` reflects the **filtered** count, not the table count.
 - MITRE ATT&CK mappings come from the ruleset's `mitre` catalogue, attached per signal.
 
 ### 3.6 Report — `phishpipe/report.py` + `narrative.py`
 
 - **Deterministic Markdown template, always.** It renders even when zero signals fire.
-- **LLM polish is opt-in** (`OPENAI_API_KEY` / `LLM_API_KEY`); the LLM may reword
-  *narrative* sections but cannot alter scores, verdicts, or evidence tables.
+- **LLM polish is opt-in** (`OPENAI_API_KEY` / `LLM_API_KEY`). When enabled the model is
+  given the *already-scored* facts (classification, confidence, severity, signals,
+  recommended actions) with the instruction not to invent indicators, scores or
+  conclusions; if the call fails or returns nothing usable, `narrative.py` falls back to
+  the template. The numeric verdict never comes from the LLM.
 - All URLs in the report and UI are **defanged** (`_defang()`) so a report can be pasted
   into Slack without becoming a live link.
 - Markdown tables are rendered by `web/app.js:md()`; the separator-row regex is
   deliberately tolerant so any table in any generated report renders.
 
-### 3.7 Notify — `phishpipe/narrative.py` / `report.py`
+### 3.7 Notify — `phishpipe/narrative.py`
 
-- `WEBHOOK_URL` → POST the alert JSON.
-- `SMTP_*` → send the Markdown alert by email.
-- Neither configured → the alert is still fully rendered in the **notification preview**
-  pane of the UI. Notification is never silently skipped.
+Produces a `NotificationMessage` — recipient address, subject line (prefix depends on
+classification), and a plain-language body written for a non-technical recipient
+("what this means for you" / "what happens next"). It is **always generated** — for
+false positives too, as a "no action required" note — and rendered in the UI's
+*User notification* tab and embedded as section 11 of the report.
 
 ---
 
@@ -165,10 +203,11 @@ environment, and a local file keeps the project runnable anywhere.
 
 Thin transport over `Pipeline`. Responsibilities:
 
-- Request validation (upload size limits, format sniffing).
-- Case CRUD + report rendering.
-- `/api/metrics`: counters, score histogram, mean latency, rate-limited count.
-- Static file serving for `web/` at `/`.
+- Request validation (25 MiB upload cap, empty-body checks, path-traversal guard on samples).
+- Case list/get/status/delete + report rendering (`?format=markdown|json`).
+- `/api/status`: provider availability + skip reasons, LLM status, detection version, limits.
+- `/api/metrics`: case counters and classification/severity histograms from `CaseStore.stats()`.
+- Static file serving for `web/` at `/`, plus `/api/openapi.json`.
 - `/health` alias for liveness probes (in addition to `/api/health`).
 
 ## 5. Frontend — `web/`
@@ -176,21 +215,23 @@ Thin transport over `Pipeline`. Responsibilities:
 Vanilla HTML/CSS/JS, no build step.
 
 - Three intake modes: **upload**, **paste raw**, **run a sample**.
-- Verdict gauge + 7 result tabs (Summary, Extracted, Enrichment, Confidence, MITRE, Report, Notification).
-- Case queue with status/severity filters and analyst triage (PATCH).
-- Metrics strip polled from `/api/metrics`.
+- Verdict gauge + 7 result tabs: **Summary, Signals, IOCs, Enrichment, Timeline,
+  Full report, User notification**.
+- Case queue with severity/status filters and analyst triage via
+  `PATCH /api/cases/{id}/status`.
+- Metrics strip polled from `/api/metrics` (case count, avg confidence, avg triage time).
 - `md()` renders the Markdown report; `defang()` neutralizes URLs before display.
 
 ---
 
-## 5. Cross-cutting concerns
+## 6. Cross-cutting concerns
 
 **Failure isolation.** Each stage catches, records, and degrades. A provider blowing up
-never takes down an investigation; the result simply marks that provider as
-`offline_only`.
+never takes down an investigation; its result is marked `offline: true` and it lands in
+`providers_skipped` with a reason.
 
-**No hangs.** Network calls carry explicit timeouts; the circuit breaker stops retrying
-a dead provider mid-run.
+**No hangs.** Network calls carry explicit timeouts with no retries; a slow or dead
+provider degrades to an error result instead of blocking the pipeline.
 
 **Testability.** 114 tests cover each stage in isolation plus full pipeline runs against
 the four bundled samples. `tools/smoke_samples.py` runs the same four end-to-end.
@@ -201,11 +242,11 @@ scored it.
 
 ---
 
-## 6. Extension points
+## 7. Extension points
 
 | To add… | Do this |
 | --- | --- |
 | A new signal | Add an entry under `signals:` in `detections/signals.yaml`, bump `version`, open a PR. No code change. |
-| A new provider | Implement the `Provider` protocol in `phishpipe/enrich.py`, register it, add its env var to `config.py`. |
-| A new report section | Extend the template in `narrative.py` — the LLM (if enabled) may reword but not restructure. |
+| A new provider | Subclass `EnrichmentProvider` in `phishpipe/enrich.py`, add it to `build_providers()`, register its env var in `config.PROVIDER_ENV_VARS`. |
+| A new report section | Extend the template in `narrative.py` / `report.py` — the LLM (if enabled) is given the facts, never the structure. |
 | A new intake format | Add a branch in `ingest.py`'s format auto-detection. |

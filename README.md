@@ -47,7 +47,7 @@ python tools\smoke_samples.py
            ▼
    ┌────────────────┐
    │ 2. EXTRACT     │  URLs, IPs, domains, attachments, auth results,
-   └───────┬────────┘  brands, urgency language, thread position
+   └───────┬────────┘  brands, urgency/threat language, Received chain
            ▼
    ┌────────────────┐
    │ 3. ENRICH      │  pluggable providers — every one is optional
@@ -59,15 +59,15 @@ python tools\smoke_samples.py
            ▼
    ┌────────────────┐
    │ 5. CASE        │  SQLite persistence, MITRE ATT&CK mapping
-   └───────┬────────┘  auto-triage: disposition / severity / action
+   └───────┬────────┘  auto-triage: severity / status / recommended actions
            ▼
    ┌────────────────┐
    │ 6. REPORT      │  deterministic Markdown template, always
    └───────┬────────┘  optional LLM narrative polish if a key exists
            ▼
    ┌────────────────┐
-   │ 7. NOTIFY      │  webhook / SMTP if configured, otherwise a
-   └────────────────┘  rendered in-app notification preview
+   │ 7. NOTIFY      │  ready-to-send recipient message: subject +
+   └────────────────┘  plain-language body, rendered in the UI
 ```
 
 ---
@@ -76,17 +76,19 @@ python tools\smoke_samples.py
 
 | Concern | Offline answer |
 | --- | --- |
-| URL / domain reputation | `data/offline_verdicts.json` — curated known-bad + known-good entries, SHA-256 hashed URL keys, plus heuristic scoring (punycode, dynamic-DNS, IP hosts, `@`-obfuscation, homoglyphs) |
+| URL / domain reputation | `data/offline_verdicts.json` — curated known-bad/known-good entries keyed by lowercased indicator (domains, IPs, hashes, email domains), plus deterministic structural heuristics (punycode, dynamic-DNS, IP hosts, `@`-obfuscation, homoglyphs) |
 | SPF / DKIM / DMARC | Parsed straight from the `Authentication-Results` header and evaluated locally |
-| Attachment detonation | Local type sniffing (magic bytes), double-extension and macro heuristics, ZIP/Office inspection |
+| Attachment inspection | Filename/extension-chain analysis (double extension), declared-MIME vs extension mismatch, macro-instruction language, password-protected-archive hints |
 | Case management | SQLite (`data/cases.db`) — no TheHive / OpenCTI / Docker |
 | Report writing | Deterministic Markdown template that renders even with zero signals fired |
-| Notifications | Webhook/SMTP when configured, otherwise an in-app preview pane |
+| User notification | Always produced as a ready-to-send message (recipient address, subject, plain-language body) rendered in the UI's notification pane |
 | LLM narrative | Opt-in only; falls back to the template automatically |
 
 Every provider follows the same contract: **never raise, never hang, always return a
-structured `ProviderResult`.** Network providers carry a hard timeout, a circuit breaker
-after repeated failures, and are skipped entirely when their key is absent.
+structured result.** Network providers use short timeouts and no retries; a failure is
+converted into a result object and the pipeline moves on. Providers whose key is absent
+are *skipped*, not errored — `GET /api/status` lists both `providers` and
+`providers_skipped` with the reason.
 
 ---
 
@@ -96,16 +98,16 @@ Set any of these to activate live enrichment. Everything else keeps working unto
 
 | Env var | Enables | Fallback when unset |
 | --- | --- | --- |
-| `ABUSEIPDB_KEY` | AbuseIPDB blacklist check | offline verdict dataset + heuristics |
-| `VIRUSTOTAL_KEY` | VirusTotal URL/file verdict | offline verdict dataset |
-| `URLHAUS_KEY` | URLhaus malware-URL feed | offline verdict dataset |
-| `OPENPHISH_KEY` | OpenPhish phishing feed | offline verdict dataset |
-| `OTX_KEY` | AlienVault OTX pulse lookup | offline verdict dataset |
-| `OPENAI_API_KEY` / `LLM_API_KEY` | LLM narrative polish on the report | deterministic template |
-| `SMTP_HOST` (+ `SMTP_USER`, `SMTP_PASS`, `SMTP_PORT`) | Real email delivery of the alert | in-app notification preview |
-| `WEBHOOK_URL` | POST the alert to a webhook | in-app notification preview |
+| `VT_API_KEY` | VirusTotal URL/file reputation | offline verdict dataset + heuristics |
+| `URLSCAN_API_KEY` | urlscan.io URL scanning | offline verdict dataset + heuristics |
+| `ABUSEIPDB_API_KEY` | AbuseIPDB IP reputation | offline structural heuristics |
+| `OPENAI_API_KEY` / `LLM_API_KEY` | LLM narrative polish on the summary/notification | deterministic template |
+| `LLM_BASE_URL` / `LLM_MODEL` | Override the OpenAI-compatible endpoint/model (defaults `https://api.openai.com/v1`, `gpt-4o-mini`) | defaults |
+| `PHISHPIPE_OFFLINE` | Force offline mode even when keys are present (`1`/`true`/`yes`/`on`) — deterministic demos and CI | — |
+| `PHISHPIPE_BASELINE_MINUTES` | Manual-triage baseline used for the "time saved" metric (default `45`) | `45` |
 
-`GET /api/providers` reports which providers are live and which are offline.
+`GET /api/status` reports which providers are live, which are skipped and why, plus the
+LLM status and the loaded detection version.
 
 ---
 
@@ -116,46 +118,68 @@ tunable as a plain Git diff. No redeploys.
 
 ```yaml
 version: "1.0.0"
+
 scoring:
-  base: 0
-  clamp: [0, 100]          # additive score is clamped to 0–100
-  thresholds:
-    info: 0
-    low: 35
-    medium: 55
-    high: 75
-    critical: 90
+  true_positive_threshold: 70    # confidence >= this  -> true positive
+  suspicious_threshold: 30       # confidence >= this  -> suspicious, else false positive
+  critical_severity_threshold: 90
+  high_severity_threshold: 70
+  medium_severity_threshold: 40
+  low_severity_threshold: 15
+  critical_signal_auto_escalate: true
 ```
 
-Each signal declares a `weight`, a `description`, and where it gets its evidence:
+Each signal declares a signed `weight`, a `severity`, a `category`, and the ATT&CK
+techniques it maps to. Positive weights push the score up, negative weights are
+mitigating factors:
 
 ```yaml
 signals:
-  urgent_language:
+  - id: identity.brand_impersonation
+    title: Brand impersonation detected
+    description: The message imitates a well-known brand outside the sender's own domain.
     weight: 15
-    description: "Uses urgency or deadline pressure language"
-    category: content
-    words: ["urgent", "immediately", "within 24 hours", "suspended", "verify your account"]
+    severity: high
+    category: identity
+    techniques: [T1566, T1598]
+
+  - id: auth.all_pass_aligned
+    title: SPF, DKIM and DMARC all pass
+    description: Full authentication chain verified and aligned - a strong mitigating factor.
+    weight: -20
+    severity: info
+    category: auth
+    techniques: []
 ```
 
-**Tuning a rule is a one-line diff.** Bump `version`, open a PR, and the change is
-reviewable in isolation. `GET /api/detections` returns the loaded ruleset + version at
-runtime, so the analyst can always see *which* ruleset produced a verdict.
+The file also carries `wordlists{}` (phrase lists, allow/deny lists used by the
+extractor) and `mitre{}` (the ATT&CK technique catalogue), so **tuning a rule or adding a
+phrase is a one-line diff.** Bump `version`, open a PR, and the change is reviewable in
+isolation. `GET /api/detections` returns the loaded ruleset + version + thresholds at
+runtime, so an analyst can always see *which* ruleset produced a verdict.
 
 ### Confidence explanation
 
-The analyzer produces a human-readable explanation alongside the score, e.g.:
+Score = `clamp(Σ matched weights, 0, 100)`, then mapped to a classification band
+(`>= 70` true positive, `>= 30` suspicious, else false positive) and a severity band.
+Every verdict ships with the factors that produced it — verbatim from a real DHL sample
+report:
 
-> **Confidence: high (score 78).** This message is likely malicious. Contributing
-> factors: credential-harvesting URL on a lookalike domain (weight 25), brand
-> impersonation of *Microsoft* (weight 20), urgent deadline pressure (weight 15),
-> sender domain registered 3 days ago (weight 18). Offsetting factor: message passed
-> SPF/DKIM/DMARC alignment (−10). Auto-escalated to **critical** because attachment
-> content matched a known-malicious pattern.
+> **9/37 detection signals matched for a raw score of 54 clamped to 54/100.**
+> Highest-impact signals: Reputation service reports malicious (+25); SPF, DKIM and DMARC
+> all pass (−20); Display name impersonates a known brand or person (+15); Brand
+> impersonation detected (+15); Message originates outside the expected mail path (+6).
+> Score sits between 30 and 70 — insufficient evidence for an automatic verdict.
+> Mitigating factors reduced the score: SPF, DKIM and DMARC all pass.
 
-Severity auto-escalation to `critical` is restricted to
-`SELF_EVIDENCE_CATEGORIES = {"content", "attachment"}` — a reputation hit alone can
-never push a medium-confidence message into critical.
+Every matched signal also lists its evidence ("Display name 'DHL Express' claims 'dhl'
+but sender domain is `parcel-redelivery-dhl.click`"), and unmatched signals are shown
+with `_not matched_` so the analyst can see what *didn't* fire.
+
+Severity auto-escalation to `critical` is governed by `critical_signal_auto_escalate`
+and restricted to `SELF_EVIDENCE_CATEGORIES = {"content", "attachment"}` — a critical
+hit must be self-evident in the message itself, so a third-party reputation hit alone
+can never push a medium-confidence message into critical.
 
 ---
 
@@ -163,18 +187,21 @@ never push a medium-confidence message into critical.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/health`, `/api/health` | liveness + detection version + provider status |
-| `GET` | `/api/status` | pipeline stage timings, rule version, provider flags |
-| `GET` | `/api/detections` | loaded ruleset + version + active weights |
-| `GET` | `/api/metrics` | counters, score histogram, rate-limited, mean latency |
-| `POST` | `/api/investigate/upload` | multipart `.eml` / `.txt` / `.html` upload |
-| `POST` | `/api/investigate/raw` | raw message body as JSON |
-| `GET` | `/api/investigate/sample/{name}` | run one of the bundled samples |
-| `GET` | `/api/cases` | paginated case list (`?status=&severity=&q=`) |
+| `GET` | `/health`, `/api/health` | liveness probe |
+| `GET` | `/api/status` | providers live/skipped + reasons, LLM status, detection version, limits, case count |
+| `GET` | `/api/detections` | loaded ruleset + thresholds + signal catalogue + MITRE map |
+| `GET` | `/api/metrics` | case counters, classification/severity histogram, generated timestamp |
+| `GET` | `/api/samples` | list bundled `.eml` fixtures |
+| `POST` | `/api/investigate/upload` | multipart `.eml` / `.msg` / `.txt` upload (25 MiB cap) |
+| `POST` | `/api/investigate/raw` | raw RFC5322 text as `{"raw_email": "..."}` |
+| `POST` | `/api/investigate/sample/{name}` | run one of the bundled samples |
+| `GET` | `/api/cases?limit=&offset=&classification=&severity=&status=&search=` | paginated case list; `total` honours active filters |
 | `GET` | `/api/cases/{id}` | single case |
-| `PATCH` | `/api/cases/{id}` | analyst triage (status / severity / notes) |
-| `GET` | `/api/cases/{id}/report` | rendered Markdown report |
-| `POST` | `/api/reset` | clear stored cases (dev) |
+| `PATCH` | `/api/cases/{id}/status` | analyst triage — `new` / `triaged` / `escalated` / `closed` |
+| `GET` | `/api/cases/{id}/report?format=markdown\|json` | rendered Markdown report (or report + notification JSON) |
+| `DELETE` | `/api/cases/{id}` | delete a case |
+| `POST` | `/api/reset` | clear stored cases (demo reset) |
+| `GET` | `/api/openapi.json` | machine-readable API description |
 
 ---
 
@@ -182,14 +209,16 @@ never push a medium-confidence message into critical.
 
 `python tools\smoke_samples.py` output:
 
-| Sample | Disposition | Severity | Score | Why |
+| Sample | Classification | Severity | Score | Why |
 | --- | --- | --- | --- | --- |
-| `legit_receipt.eml` | `false_positive` | `info` | **0** | Genuine receipt, no signals fired — correctly *not* flagged |
-| `dhl_tracking.eml` | `suspicious` | `medium` | **54** | Lookalike domain + urgency, but no direct credential URL |
-| `invoice_2024.eml` | `true_positive` | `critical` | **100** | Macro-enabled invoice attachment + credential URL |
-| `m365_verify.eml` | `true_positive` | `critical` | **100** | Microsoft impersonation + harvest URL + urgent deadline |
+| `legit_it_maintenance_notice.eml` | `false_positive` | `info` | **0** | Allow-listed internal sender + SPF/DKIM/DMARC pass + clean reputation → negative weights clamp the score to 0 |
+| `phish_dhl_redelivery.eml` | `suspicious` | `medium` | **54** | Lookalike domain + display-name spoof + reputation hit, but auth all passes (−20) and there is no credential URL — inconclusive, needs a human |
+| `phish_invoice_attachment.eml` | `true_positive` | `critical` | **100** | Macro-instruction language + double-extension + macro-enabled attachment + failing auth |
+| `phish_m365_credential_harvest.eml` | `true_positive` | `critical` | **100** | Microsoft brand impersonation + harvest URL + mismatched link + urgency/threat language |
 
-The legit sample scoring **0** matters: it proves the rules don't just fire on everything.
+The legit sample scoring **0** matters: it proves the rules don't flag everything — and
+`phish_dhl` stopping at **54/suspicious** proves a reputation hit alone can't inflate a
+message into critical.
 
 ---
 
@@ -199,7 +228,7 @@ The legit sample scoring **0** matters: it proves the rules don't just fire on e
 SOC1/
 ├── phishpipe/           # core pipeline package
 │   ├── config.py        # env-driven settings, paths, provider keys
-│   ├── models.py        # dataclasses: Message, Finding, Verdict, Case
+│   ├── models.py        # Pydantic models: Indicator, Signal, Verdict, Case, Notification
 │   ├── ingest.py        # RFC822 / headers / HTML parsing
 │   ├── extract.py       # URLs, brands, attachments, auth results, urgency
 │   ├── enrich.py        # pluggable providers + offline verdict dataset
