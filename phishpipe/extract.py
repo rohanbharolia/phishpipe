@@ -18,6 +18,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 from phishpipe.detections import Detections, load_detections
+from phishpipe.homoglyph import check_domain_typosquatting, detect_quishing
 from phishpipe.models import Indicator, ParsedEmail, ReceivedChain, ReceivedHop
 
 # ---------------------------------------------------------------------------
@@ -159,6 +160,7 @@ class LinkObservation:
     has_credential_token: bool = False
     anchor_text: str = ""
     mismatched: bool = False
+    typosquatting: dict[str, Any] | None = None
 
 
 @dataclass
@@ -212,6 +214,8 @@ class ContentProfile:
     mismatched_links_found: list[str] = field(default_factory=list)
     credential_urls_found: list[str] = field(default_factory=list)
     punycode_found: list[str] = field(default_factory=list)
+    typosquatting_hits: list[dict[str, Any]] = field(default_factory=list)
+    quishing_hit: dict[str, Any] | None = None
 
     @property
     def mismatched_link_count(self) -> int:
@@ -231,6 +235,8 @@ class ContentProfile:
                 bool(self.suspicious_tlds_found),
                 bool(self.punycode_found),
                 bool(self.credential_urls_found),
+                bool(self.typosquatting_hits),
+                bool(self.quishing_hit),
                 self.display_name_spoofed,
                 self.brand_impersonation,
                 self.password_protected_hint,
@@ -323,6 +329,16 @@ def build_content_profile(
         if not official:
             profile.brand_impersonation = True
 
+    if profile.sender_domain and not trusted_sender:
+        sender_typo = check_domain_typosquatting(profile.sender_domain)
+        if sender_typo:
+            profile.typosquatting_hits.append({
+                "source": "sender_domain",
+                "domain": profile.sender_domain,
+                **sender_typo,
+            })
+            profile.brand_impersonation = True
+
     # --- links -------------------------------------------------------------
     credential_tokens = set(wl("credential_url_tokens"))
     suspicious_tlds = set(wl("suspicious_tlds"))
@@ -343,6 +359,17 @@ def build_content_profile(
         obs.is_shortener = ext in shorteners or host in shorteners
         obs.is_suspicious_tld = any(host.endswith(tld) for tld in suspicious_tlds)
         obs.is_punycode = "xn--" in host
+
+        # Check domain typosquatting / homoglyphs
+        typo = check_domain_typosquatting(host)
+        if typo:
+            obs.typosquatting = typo
+            profile.typosquatting_hits.append({
+                "source": "link_host",
+                "url": url,
+                "domain": host,
+                **typo,
+            })
 
         path_tokens = set(re.split(r"[/?#&=._-]", url.lower()))
         obs.has_credential_token = bool(credential_tokens & path_tokens)
@@ -379,6 +406,7 @@ def build_content_profile(
             or obs.is_ip_host
             or obs.is_suspicious_tld
             or obs.is_punycode
+            or bool(obs.typosquatting)
         )
         if obs.has_credential_token and brand_or_host_risk:
             profile.credential_urls_found.append(url)
@@ -420,6 +448,17 @@ def build_content_profile(
                     obs.content_type_mismatch = True
 
         profile.attachments.append(obs)
+
+    # Quishing (QR Phishing) lure detection
+    body_content = getattr(email, "body_text", "") or getattr(email, "body_plain", "") or ""
+    quish = detect_quishing(
+        email.subject or "",
+        body_content,
+        email.body_html or "",
+        email.attachments,
+    )
+    if quish:
+        profile.quishing_hit = quish
 
     return profile
 

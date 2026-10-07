@@ -28,6 +28,7 @@ from phishpipe.extract import (
 from phishpipe.models import (
     Case,
     EnrichmentBundle,
+    LinkDetail,
     ParsedEmail,
     PipelineMetrics,
     TimelineEntry,
@@ -176,6 +177,22 @@ class InvestigationPipeline:
             for a in profile.attachments
         ]
 
+        link_details = [
+            LinkDetail(
+                url=obs.url,
+                host=obs.host,
+                is_ip_host=obs.is_ip_host,
+                is_shortener=obs.is_shortener,
+                is_suspicious_tld=obs.is_suspicious_tld,
+                is_punycode=obs.is_punycode,
+                has_credential_token=obs.has_credential_token,
+                anchor_text=obs.anchor_text,
+                mismatched=obs.mismatched,
+                typosquatting=obs.typosquatting,
+            )
+            for obs in profile.links
+        ]
+
         case_id = _case_id(email)
         case = Case(
             id=case_id,
@@ -188,6 +205,10 @@ class InvestigationPipeline:
             timeline=timeline,
             attachment_flags=attachment_flags,
             detected_brands=list(profile.brands_mentioned),
+            links=link_details,
+            received_chain=chain,
+            typosquatting=profile.typosquatting_hits,
+            quishing=profile.quishing_hit,
         )
 
         # --- Stage 5: reasoning + narrative --------------------------------

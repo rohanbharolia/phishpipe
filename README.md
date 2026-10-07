@@ -4,7 +4,7 @@ An offline-first SOC tool that takes a raw email (upload, paste, or sample), run
 investigation — extract → enrich → analyze → case → report → notify — and returns an
 analyst-ready verdict with a plain-English confidence explanation.
 
-**114 tests pass. No API keys required. No Docker required.**
+**129 tests pass. No API keys required. No Docker required.**
 
 ---
 
@@ -183,6 +183,27 @@ can never push a medium-confidence message into critical.
 
 ---
 
+---
+
+## Advanced SOC Capabilities
+
+### 1. Homoglyph, Typosquatting & Quishing (QR Phishing)
+- **Visual Homoglyphs**: Converts leetspeak substitutions back to canonical alphabet (`micr0s0ft` → `microsoft`, `paypa1` → `paypal`).
+- **Levenshtein Distance**: Flags 1-character brand typos and unauthorized brand registrations under untrusted TLDs.
+- **Quishing Lures**: Detects prompts instructing recipients to scan QR codes on mobile cameras to bypass perimeter defenses.
+
+### 2. Time-of-Click Correlation & Incident Escalation
+- Correlate gateway or EDR telemetry using `POST /api/cases/{id}/click-event`.
+- Registering a positive click immediately escalates the incident severity to **CRITICAL**, appends compromise tags, records audit evidence, and injects emergency containment playbooks (Okta/Entra ID SSO termination, EDR subnet isolation).
+
+### 3. SIEM & Threat Intel Export (STIX 2.1 & Sigma)
+- **STIX 2.1**: Deterministic UUIDv5-keyed OASIS bundles mapping indicators, observables, MITRE ATT&CK techniques, and relationships.
+- **Sigma Rules**: Multi-logsource YAML detection rules for direct ingestion into Splunk, Microsoft Sentinel, Elastic, and QRadar.
+
+### 4. Automated Mailbox Watcher & Webhooks
+- **Directory Watcher**: Polls intake directories for pending `.eml`/`.msg` files, runs the pipeline, and archives files automatically.
+- **Webhook Dispatcher**: Sends high-severity incident notification cards to Slack or generic SIEM webhooks.
+
 ## API surface
 
 | Method | Path | Purpose |
@@ -199,6 +220,21 @@ can never push a medium-confidence message into critical.
 | `GET` | `/api/cases/{id}` | single case |
 | `PATCH` | `/api/cases/{id}/status` | analyst triage — `new` / `triaged` / `escalated` / `closed` |
 | `GET` | `/api/cases/{id}/report?format=markdown\|json` | rendered Markdown report (or report + notification JSON) |
+| `GET` | `/api/cases/{id}/stix` | OASIS STIX 2.1 JSON bundle export |
+| `GET` | `/api/cases/{id}/sigma` | multi-logsource Sigma detection rule in YAML |
+| `POST` | `/api/cases/{id}/click-event` | record/simulate gateway or proxy click telemetry (auto-escalates to Critical) |
+| `GET` | `/api/cases/{id}/click-events` | list positive click telemetry events for case |
+| `GET` | `/api/cases/{id}/notes` | list analyst investigation notes |
+| `POST` | `/api/cases/{id}/notes` | add analyst note |
+| `DELETE` | `/api/cases/{id}/notes/{note_id}` | delete note |
+| `GET` | `/api/cases/{id}/tags` | get tags for case |
+| `POST` | `/api/cases/{id}/tags` | add tag |
+| `DELETE` | `/api/cases/{id}/tags/{tag}` | remove tag |
+| `PATCH` | `/api/cases/{id}/tags` | replace tag list |
+| `POST` | `/api/cases/{id}/actions/{name}` | execute containment playbook (`quarantine`, `block_domain`, `reset_credentials`, `notify_webhook`) |
+| `GET` | `/api/cases/{id}/actions` | audit log of playbook actions executed |
+| `GET` | `/api/campaigns` | cluster stored cases into active threat campaigns |
+| `POST` | `/api/watch/scan` | on-demand intake mailbox watcher scan and ingest |
 | `DELETE` | `/api/cases/{id}` | delete a case |
 | `POST` | `/api/reset` | clear stored cases (demo reset) |
 | `GET` | `/api/openapi.json` | machine-readable API description |
@@ -228,15 +264,20 @@ message into critical.
 SOC1/
 ├── phishpipe/           # core pipeline package
 │   ├── config.py        # env-driven settings, paths, provider keys
-│   ├── models.py        # Pydantic models: Indicator, Signal, Verdict, Case, Notification
+│   ├── models.py        # Pydantic models: Indicator, Signal, Verdict, Case, ClickTelemetry
 │   ├── ingest.py        # RFC822 / headers / HTML parsing
 │   ├── extract.py       # URLs, brands, attachments, auth results, urgency
+│   ├── homoglyph.py     # Levenshtein typosquatting, lookalike normalization, quishing
 │   ├── enrich.py        # pluggable providers + offline verdict dataset
 │   ├── detections.py    # YAML ruleset loader + weighted scorer
 │   ├── analyze.py       # scoring, confidence band, explanation
 │   ├── narrative.py     # deterministic template + optional LLM polish
-│   ├── report.py        # Markdown report assembly
-│   ├── casestore.py     # SQLite case persistence
+│   ├── report.py        # Markdown report assembly + click audit + lookalike matrix
+│   ├── casestore.py     # SQLite case persistence, notes, tags, campaigns, click events
+│   ├── stix.py          # OASIS STIX 2.1 JSON bundle generator with UUIDv5 mapping
+│   ├── sigma.py         # Multi-logsource Sigma detection rules in YAML
+│   ├── watcher.py       # Automated inbox intake directory poller and archiver
+│   ├── webhook.py       # Slack / generic JSON incident alert dispatcher
 │   └── pipeline.py      # stage orchestration + timing
 ├── detections/
 │   └── signals.yaml     # ★ all detection logic as data (versioned)
@@ -246,7 +287,7 @@ SOC1/
 ├── api/main.py          # FastAPI app
 ├── web/                 # index.html / styles.css / app.js
 ├── samples/             # 4 .eml fixtures
-├── tests/               # 114 tests
+├── tests/               # 129 tests (100% passing)
 ├── tools/               # smoke_samples.py, check_syntax.py
 └── docs/ARCHITECTURE.md
 ```

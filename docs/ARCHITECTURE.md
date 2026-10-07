@@ -69,7 +69,8 @@ Also extracts:
 
 - **Authentication results** — SPF / DKIM / DMARC parsed from `Authentication-Results` and evaluated locally.
 - **Received chain** — hops, originating IP/HELO, first-received timestamp (`build_received_chain`).
-- **Brand impersonation** — match against the `brand_domains` wordlist, then confirm the sender is *not* the official domain via `_is_official_brand_sender()`. Suppressed for allow-listed/internal senders.
+- **Brand impersonation & Lookalikes (`phishpipe/homoglyph.py`)** — match against official `brand_domains`, plus deterministic visual leetspeak normalization (`micr0s0ft` → `microsoft`, `paypa1` → `paypal`) and Levenshtein distance checks for typosquatting. Lookalike findings are attached to `LinkDetail.typosquatting` and surfaced in the report.
+- **Quishing (QR Phishing) Detection** — detects prompts instructing recipients to scan QR codes on mobile cameras to bypass perimeter controls, and flags QR code attachments.
 - **Host sanity** — Python 3.12 `urlparse` can raise `ValueError` on bracketed IPv4 (`http://[1.2.3.4]/`), so `_manual_host()` provides a regex fallback.
 
 ### 3.3 Enrich — `phishpipe/enrich.py`
@@ -173,7 +174,10 @@ environment, and a local file keeps the project runnable anywhere.
   (`new → triaged → escalated → closed`), classification, severity, detection version.
 - Query filters: `classification`, `severity`, `status`, free-text `search`
   (subject / sender / ID), with `limit`/`offset` paging.
-- `total` reflects the **filtered** count, not the table count.
+- **Analyst Notes & Tags**: `CaseNote` records timestamped analyst comments; tags enable custom campaign labelling and triage filtering.
+- **Playbook Execution**: Records automated and manual containment actions (`quarantine`, `block_domain`, `reset_credentials`, `notify_webhook`) into the audit trail.
+- **Positive Click Correlation (`record_click`)**: Correlates web proxy/gateway time-of-click telemetry. Automatically escalates case to **CRITICAL**, appends compromise tags, records audit evidence, and injects emergency credential/EDR containment playbooks.
+- **Campaign Clustering (`get_campaigns`)**: Clusters stored cases by sender domain or normalized subject line to track active adversary campaigns across the enterprise.
 - MITRE ATT&CK mappings come from the ruleset's `mitre` catalogue, attached per signal.
 
 ### 3.6 Report — `phishpipe/report.py` + `narrative.py`
@@ -198,6 +202,23 @@ false positives too, as a "no action required" note — and rendered in the UI's
 *User notification* tab and embedded as section 11 of the report.
 
 ---
+
+### 3.8 Threat Intel Export (STIX 2.1) — `phishpipe/stix.py`
+
+Generates standard OASIS STIX 2.1 JSON bundles (`GET /api/cases/{id}/stix`) with deterministic UUIDv5 identifiers:
+- Maps atomic indicators (URLs, domains, IPs, file hashes) into typed STIX indicators with defanged names and pattern expressions.
+- Maps detected MITRE ATT&CK techniques to `attack-pattern` SDOs.
+- Emits explicit `relationship` objects (`indicates`) linking observables to attack patterns.
+- Includes a top-level `report` SDO bundling the entire investigation.
+
+### 3.9 SIEM Detection Rules (Sigma) — `phishpipe/sigma.py`
+
+Generates multi-logsource Sigma detection rules in YAML (`GET /api/cases/{id}/sigma`) for direct ingestion into Splunk, Elastic, Sentinel, and QRadar. Maps case indicators across network proxy, DNS query, destination IP, and file hash selections.
+
+### 3.10 Mailbox Intake Watcher & Webhooks — `phishpipe/watcher.py` & `phishpipe/webhook.py`
+
+- **Intake Watcher**: Continuously or on-demand polls an inbox directory for pending email files (`.eml`, `.msg`, `.txt`), automatically executes the investigation pipeline, and archives processed files.
+- **Webhook Dispatcher**: Formats and dispatches incident cards to Slack or generic SIEM webhooks upon high-severity confirmation.
 
 ## 4. API layer — `api/main.py`
 
@@ -233,7 +254,7 @@ never takes down an investigation; its result is marked `offline: true` and it l
 **No hangs.** Network calls carry explicit timeouts with no retries; a slow or dead
 provider degrades to an error result instead of blocking the pipeline.
 
-**Testability.** 114 tests cover each stage in isolation plus full pipeline runs against
+**Testability.** 129 tests cover each stage in isolation plus full pipeline runs against
 the four bundled samples. `tools/smoke_samples.py` runs the same four end-to-end.
 
 **Traceability.** Every case stores the detection `version` and per-signal weights that
@@ -250,3 +271,5 @@ scored it.
 | A new provider | Subclass `EnrichmentProvider` in `phishpipe/enrich.py`, add it to `build_providers()`, register its env var in `config.PROVIDER_ENV_VARS`. |
 | A new report section | Extend the template in `narrative.py` / `report.py` — the LLM (if enabled) is given the facts, never the structure. |
 | A new intake format | Add a branch in `ingest.py`'s format auto-detection. |
+| A new protected brand | Add the brand and official domain to `TARGET_BRANDS` in `phishpipe/homoglyph.py` and `brand_domains` in `detections/signals.yaml`. |
+| A new webhook integration | Extend `phishpipe/webhook.py` with custom card payload builders (e.g. MS Teams, PagerDuty). |

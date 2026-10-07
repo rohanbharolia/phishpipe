@@ -209,3 +209,90 @@ def test_openapi_document(client):
     doc = client.get("/openapi.json").json()
     assert "/api/investigate/upload" in doc["paths"]
     assert "/api/cases/{case_id}" in doc["paths"]
+
+
+# --- advanced SOC extensions -----------------------------------------------
+def test_stix_and_sigma_export(client):
+    case = _create(client)
+    cid = case["id"]
+
+    # STIX 2.1
+    stix_resp = client.get(f"/api/cases/{cid}/stix")
+    assert stix_resp.status_code == 200
+    stix = stix_resp.json()
+    assert stix["type"] == "bundle"
+    assert len(stix["objects"]) > 0
+    types = {obj["type"] for obj in stix["objects"]}
+    assert "identity" in types
+    assert "report" in types
+
+    # Sigma Rule
+    sigma_resp = client.get(f"/api/cases/{cid}/sigma")
+    assert sigma_resp.status_code == 200
+    assert "Phishing Threat Activity" in sigma_resp.text and "logsource:" in sigma_resp.text
+    assert "logsource:" in sigma_resp.text
+
+
+def test_case_notes_and_tags(client):
+    case = _create(client)
+    cid = case["id"]
+
+    # Notes
+    add_resp = client.post(f"/api/cases/{cid}/notes", json={"text": "Reviewing payload URL", "author": "senior_analyst"})
+    assert add_resp.status_code == 200
+    note_id = add_resp.json()["id"]
+
+    notes = client.get(f"/api/cases/{cid}/notes").json()
+    assert len(notes) == 1
+    assert notes[0]["text"] == "Reviewing payload URL"
+
+    del_resp = client.delete(f"/api/cases/{cid}/notes/{note_id}")
+    assert del_resp.status_code == 200
+    assert len(client.get(f"/api/cases/{cid}/notes").json()) == 0
+
+    # Tags
+    client.post(f"/api/cases/{cid}/tags", json={"tag": "FIN7"})
+    client.post(f"/api/cases/{cid}/tags", json={"tag": "CredentialHarvest"})
+    tags = client.get(f"/api/cases/{cid}/tags").json()
+    assert "fin7" in tags
+    assert "credentialharvest" in tags
+
+    client.delete(f"/api/cases/{cid}/tags/fin7")
+    assert "fin7" not in client.get(f"/api/cases/{cid}/tags").json()
+
+
+def test_playbook_actions(client):
+    case = _create(client)
+    cid = case["id"]
+
+    # Quarantine
+    q_resp = client.post(f"/api/cases/{cid}/actions/quarantine", json={})
+    assert q_resp.status_code == 200
+    assert q_resp.json()["action"] == "quarantine"
+
+    # Block Domain
+    b_resp = client.post(f"/api/cases/{cid}/actions/block_domain", json={})
+    assert b_resp.status_code == 200
+    assert b_resp.json()["action"] == "block_domain"
+
+    # Reset Credentials
+    r_resp = client.post(f"/api/cases/{cid}/actions/reset_credentials", json={})
+    assert r_resp.status_code == 200
+
+    # List Actions
+    actions = client.get(f"/api/cases/{cid}/actions").json()
+    assert len(actions) >= 3
+
+
+def test_campaigns_and_watcher(client, tmp_path):
+    _create(client)
+    camp_resp = client.get("/api/campaigns")
+    assert camp_resp.status_code == 200
+    assert "campaigns" in camp_resp.json()
+
+    # Watcher scan
+    inbox = tmp_path / "test_inbox"
+    inbox.mkdir()
+    scan_resp = client.post("/api/watch/scan", json={"inbox_path": str(inbox)})
+    assert scan_resp.status_code == 200
+    assert scan_resp.json()["processed"] == 0

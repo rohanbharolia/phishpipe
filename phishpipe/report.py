@@ -75,6 +75,21 @@ def build_report(case: Case, detections_version: str = "unknown") -> str:
     lines.append(f"**Processing time:** {case.metrics.total_ms} ms")
     lines.append("")
 
+    if case.click_telemetry.has_positive_click:
+        lines.append("> [!CAUTION]")
+        lines.append(f"> **POSITIVE USER CLICK CONFIRMED ({case.click_telemetry.click_count} Recorded Event{'s' if case.click_telemetry.click_count > 1 else ''})**  ")
+        comp = "ACTIVE CREDENTIAL COMPROMISE CONFIRMED" if case.click_telemetry.credentials_compromised else "POTENTIAL SYSTEM COMPROMISE / LATERAL MOVEMENT HAZARD"
+        lines.append(f"> **Security Posture:** {comp}  ")
+        lines.append("> Gateway telemetry confirms the recipient clicked a link in this message. Immediate credential revocation and EDR isolation required.")
+        lines.append("")
+
+    if case.quishing:
+        lines.append("> [!WARNING]")
+        lines.append("> **QR CODE PHISHING (QUISHING) LURE DETECTED**  ")
+        lines.append(f"> **Evidence:** {_escape(case.quishing.get('evidence', ''))}  ")
+        lines.append(f"> **Summary:** {_escape(case.quishing.get('summary', ''))}")
+        lines.append("")
+
     # --- Verdict -----------------------------------------------------------
     lines.append("## 1. Verdict")
     lines.append("")
@@ -143,6 +158,28 @@ def build_report(case: Case, detections_version: str = "unknown") -> str:
                 f"| {_defang(hop.by_host, case.indicators) or '-'} "
                 f"| {_escape(hop.with_protocol or '') or '-'} | {hop.ip or '-'} "
                 f"| {_escape(hop.timestamp or '') or '-'} |"
+            )
+        lines.append("")
+
+    if case.click_telemetry.events:
+        lines.append("### Positive Click Telemetry Audit")
+        lines.append("")
+        lines.append("| Timestamp | Target URL (Defanged) | User | Client IP | Gateway Outcome | Creds Submitted |")
+        lines.append("|---|---|---|---|---|---|")
+        for evt in case.click_telemetry.events:
+            lines.append(
+                f"| {_fmt_ts(evt.timestamp)} | {_defang(evt.url, case.indicators)} | {_escape(evt.user_email)} | `{evt.client_ip or 'unknown'}` | `{evt.outcome.upper()}` | {'⚠️ YES' if evt.credentials_submitted else 'no'} |"
+            )
+        lines.append("")
+
+    if case.typosquatting:
+        lines.append("### Brand Lookalike & Typosquatting Analysis")
+        lines.append("")
+        lines.append("| Domain / Host | Target Brand | Match Type | Confidence | Forensic Detail |")
+        lines.append("|---|---|---|---|---|")
+        for typo in case.typosquatting:
+            lines.append(
+                f"| `{_escape(typo.get('domain', ''))}` | **{_escape(typo.get('brand', '').upper())}** | `{_escape(typo.get('type', ''))}` | {typo.get('confidence', 0)}% | {_escape(typo.get('detail', ''))} |"
             )
         lines.append("")
 
