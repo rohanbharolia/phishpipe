@@ -34,3 +34,6 @@ secrets/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Live intake drop directory used by the demo feed
+data/inbox/

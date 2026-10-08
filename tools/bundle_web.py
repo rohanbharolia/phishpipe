@@ -23,6 +23,19 @@ html_template = """<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
+  <meta name="color-scheme" content="light dark" />
+  <script>
+    (function() {
+      try {
+        var t = localStorage.getItem('phishpipe-theme');
+        if (t === 'light' || t === 'dark') {
+          document.documentElement.setAttribute('data-theme', t);
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      } catch(e) {}
+    })();
+  </script>
   <style>
 /* CSS PLACEHOLDER */
   </style>
@@ -72,8 +85,18 @@ html_template = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Quick Console Actions -->
+<!-- Quick Console Actions -->
     <div class="top-actions">
+      <!-- Dark/Light Theme Mode Switcher -->
+      <button class="btn-theme-toggle" id="btn-theme-toggle" title="Toggle Light / Dark mode" aria-label="Toggle Light or Dark theme">
+        <span class="theme-icon-dark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </span>
+        <span class="theme-icon-light" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </span>
+        <span class="theme-label" id="theme-label-text">Dark</span>
+      </button>
       <button class="btn-icon-subtle" id="btn-reset-db" title="Reset demo database">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
         <span>Reset DB</span>

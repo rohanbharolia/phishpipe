@@ -118,7 +118,143 @@ class CaseStore:
             conn.executescript(SCHEMA)
 
     # -- CRUD ---------------------------------------------------------------
+    # Telemetry-driven escalation lives in the case_clicks side table, so it is
+    # re-hydrated on read but is not part of the email the pipeline re-analyses.
+    _CLICK_SIGNAL_ID = "SIGNAL_CONFIRMED_USER_CLICK"
+    _EMERGENCY_ACTION = (
+        "EMERGENCY: Force immediate Okta/AzureAD password reset and revoke active OAuth sessions."
+    )
+
+    def _reapply_click_escalation(self, case: Case) -> bool:
+        """Re-attach persisted click telemetry and re-apply its escalation.
+
+        Case IDs are deterministic per UTC day (``phishpipe.pipeline._case_id``),
+        so investigating the same message twice upserts a brand-new verdict over
+        the existing row. Click confirmation, tags and audit actions live in
+        side tables and survive that upsert, which used to leave a confirmed
+        credential compromise labelled ``false_positive``/``info`` while the UI
+        kept rendering the critical credentials banner from the telemetry.
+
+        Called from :meth:`save` so every writer keeps verdict and telemetry in
+        step. Returns True when anything on the case was changed.
+        """
+        from phishpipe.models import MitreTechnique, Signal, TimelineEntry
+
+        events = list(case.click_telemetry.events or [])
+        if not events:
+            events = self.list_clicks(case.id)
+        if not events:
+            return False
+
+        case.click_telemetry.events = events
+        case.click_telemetry.has_positive_click = True
+        case.click_telemetry.click_count = len(events)
+        case.click_telemetry.first_click_at = events[0].timestamp
+        case.click_telemetry.last_click_at = events[-1].timestamp
+        case.click_telemetry.credentials_compromised = any(
+            e.credentials_submitted or e.outcome == "credentials_submitted" for e in events
+        )
+
+        changed = False
+
+        # 1. Verdict escalation -- a confirmed click outranks a benign score.
+        if case.verdict.severity != "critical":
+            case.verdict.severity = "critical"
+            changed = True
+        if not case.verdict.needs_human_review:
+            case.verdict.needs_human_review = True
+            changed = True
+        if case.verdict.classification == "false_positive":
+            case.verdict.classification = "suspicious"
+            changed = True
+
+        # 2. Emergency containment actions.
+        if self._EMERGENCY_ACTION not in case.verdict.recommended_actions:
+            case.verdict.recommended_actions.insert(0, self._EMERGENCY_ACTION)
+            changed = True
+        edr_action = f"EDR CONTAINMENT: Isolate host ({events[0].client_ip or 'endpoint'}) from internal subnet."
+        if edr_action not in case.verdict.recommended_actions:
+            case.verdict.recommended_actions.insert(1, edr_action)
+            changed = True
+
+        # 3. Explainable signal + MITRE mapping so the score stays auditable.
+        if not any(s.id == self._CLICK_SIGNAL_ID for s in case.signals):
+            first = events[0]
+            user_label = first.user_email or (
+                case.email.to[0] if (case.email and case.email.to) else "recipient"
+            )
+            case.signals.insert(
+                0,
+                Signal(
+                    id=self._CLICK_SIGNAL_ID,
+                    title="Positive User Click Confirmed (Gateway/EDR Telemetry)",
+                    description="Web gateway, DNS, or proxy logs confirm recipient clicked a link in this lure.",
+                    weight=30,
+                    matched=True,
+                    severity="critical",
+                    evidence=(
+                        f"Confirmed navigation by '{user_label}' to '{first.url}' "
+                        f"(Outcome: {(first.outcome or 'allowed').upper()}, "
+                        f"IP: {first.client_ip or 'unknown'})."
+                    ),
+                    category="click_telemetry",
+                    mitre=["T1204.001", "T1566.002"],
+                ),
+            )
+            case.verdict.signals_matched += 1
+            changed = True
+        if not any(m.id == "T1204.001" for m in case.verdict.mitre):
+            case.verdict.mitre.append(
+                MitreTechnique(
+                    id="T1204.001",
+                    name="User Execution: Malicious Link",
+                    tactic="Execution",
+                    url="https://attack.mitre.org/techniques/T1204/001/",
+                )
+            )
+            changed = True
+
+        # 4. Timeline stages the report renders.
+        if not any(t.stage == "click_telemetry" for t in case.timeline):
+            first = events[0]
+            case.timeline.append(
+                TimelineEntry(
+                    stage="click_telemetry",
+                    started_at=first.timestamp,
+                    duration_ms=4,
+                    detail=(
+                        f"Confirmed click by '{first.user_email or 'recipient'}' on {first.url} "
+                        f"(Outcome: {(first.outcome or 'allowed').upper()}, "
+                        f"IP: {first.client_ip or 'unknown'}) -> Escalated to CRITICAL"
+                    ),
+                )
+            )
+            changed = True
+        if not any(t.stage == "containment" for t in case.timeline):
+            case.timeline.append(
+                TimelineEntry(
+                    stage="containment",
+                    started_at=datetime.now(timezone.utc),
+                    duration_ms=2,
+                    detail="Automated containment playbook: emergency credential reset and host isolation flagged.",
+                )
+            )
+            changed = True
+
+        if changed:
+            case.metrics.total_ms = sum(t.duration_ms for t in case.timeline)
+        return changed
+
     def save(self, case: Case) -> str:
+        # Restore telemetry-driven escalation before serialising, otherwise a
+        # re-investigation would quietly demote a confirmed compromise.
+        if self._reapply_click_escalation(case):
+            try:
+                from phishpipe.report import build_report
+
+                case.report_markdown = build_report(case)
+            except Exception:
+                pass
         if not case.indicators and case.email:
             try:
                 from phishpipe.extract import extract_indicators
@@ -173,7 +309,6 @@ class CaseStore:
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title,
-                    status=excluded.status,
                     classification=excluded.classification,
                     severity=excluded.severity,
                     confidence=excluded.confidence,

@@ -200,6 +200,14 @@ def test_index_served(client):
     assert "PhishPipe" in resp.text
 
 
+def test_theme_support_served(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "btn-theme-toggle" in resp.text
+    assert "data-theme" in resp.text
+    assert "initTheme" in resp.text
+
+
 def test_static_assets_served(client):
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/styles.css").status_code == 200

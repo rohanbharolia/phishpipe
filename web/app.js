@@ -18,17 +18,17 @@ const state = {
 };
 
 const CLS_MAP = {
-  true_positive:  { label: "Confirmed Phish (TP)",  color: "#f43f5e", class: "badge-tp" },
-  suspicious:     { label: "Suspicious Lure",       color: "#eab308", class: "badge-su" },
-  false_positive: { label: "Legitimate / Benign",   color: "#10b981", class: "badge-fp" },
+  true_positive:  { label: "Confirmed Phish (TP)",  color: "var(--sev-critical)", class: "badge-tp" },
+  suspicious:     { label: "Suspicious Lure",       color: "var(--sev-medium)", class: "badge-su" },
+  false_positive: { label: "Legitimate / Benign",   color: "var(--sev-low)", class: "badge-fp" },
 };
 
 const SEV_COLORS = {
-  critical: "#f43f5e",
-  high:     "#ea580c",
-  medium:   "#f59e0b",
-  low:      "#10b981",
-  info:     "#94a3b8",
+  critical: "var(--sev-critical)",
+  high:     "var(--sev-high)",
+  medium:   "var(--sev-medium)",
+  low:      "var(--sev-low)",
+  info:     "var(--sev-info)",
 };
 
 /* ---------- DOM Helpers ---------- */
@@ -264,13 +264,14 @@ async function loadStatus() {
 async function loadMetrics() {
   try {
     const m = await api("/api/metrics");
-    $("#metric-total").textContent = m.total || 0;
-    $("#metric-threats").textContent = (m.classifications && m.classifications.true_positive) || 0;
-    $("#metric-latency").textContent = `${Math.round(m.avg_duration_ms || 0)} ms`;
-    $("#metric-escalations").textContent = (m.status && m.status.escalated) || 0;
-    $("#metric-saved").textContent = `${Math.round(m.hours_saved * 60) || 0} min`;
-    $("#case-count").textContent = m.total || 0;
-    $("#badge-cases").textContent = `${m.total || 0} CASES`;
+    $("#metric-total").textContent = m.total_cases || 0;
+    $("#metric-threats").textContent =
+      (m.by_classification && m.by_classification.true_positive) || 0;
+    $("#metric-latency").textContent = `${Math.round(m.avg_processing_ms || 0)} ms`;
+    $("#metric-escalations").textContent = m.needs_human_review || 0;
+    $("#metric-saved").textContent = `${Math.round(m.minutes_saved || 0)} min`;
+    $("#case-count").textContent = m.total_cases || 0;
+    $("#badge-cases").textContent = `${m.total_cases || 0} CASES`;
   } catch (err) {
     console.warn("Could not fetch /api/metrics:", err);
   }
@@ -648,6 +649,10 @@ function renderCase(c) {
   const clsData = CLS_MAP[v.classification] || { label: v.classification, color: "#38bdf8" };
   const sevColor = SEV_COLORS[v.severity] || clsData.color;
 
+  // A benign / false-positive message has nothing to reset, so every
+  // credential-reset affordance stays hidden unless this is a real phish.
+  const isBenign = v.classification === "false_positive";
+
   // Toolbar
   $("#toolbar-case-id").textContent = c.id;
   $("#toolbar-timestamp").textContent = `Ingested: ${new Date(c.created_at || Date.now()).toLocaleString()}`;
@@ -706,7 +711,14 @@ function renderCase(c) {
   const credsCompromised = Boolean(clickTelemetry.credentials_compromised || (clickTelemetry.events && clickTelemetry.events.some((e) => e.credentials_submitted)));
   const clickCount = clickTelemetry.click_count || (clickTelemetry.events ? clickTelemetry.events.length : 0);
 
-  const clickBannerHtml = hasClick ? `
+  // Credential reset is offered ONLY where gateway telemetry actually confirmed
+  // a positive click -- and never on a benign verdict. Everything else has no
+  // credentials to reset.
+  const showCredReset = hasClick && !isBenign;
+  const btnResetCreds = $("#btn-action-reset");
+  if (btnResetCreds) btnResetCreds.style.display = showCredReset ? "" : "none";
+
+  const clickBannerHtml = showCredReset ? `
     <div class="positive-click-alert-strip">
       <div class="pca-left">
         <div class="pca-icon">
@@ -794,11 +806,25 @@ function renderSummaryView(c) {
   const auth = c.email.auth_results || {};
 
   const reasons = (v.reasoning || []).map((r) => `<li class="reasoning-item">${esc(r)}</li>`).join("");
-  const actions = (v.recommended_actions || [
-    "Quarantine email across all tenant mailboxes",
-    "Block identified domains and URLs at Secure Web Gateway",
-    "Force credential reset and revoke active sessions for targeted user",
-  ]).map((a) => `
+  // Fallback checklist for verdicts that carry no actions. A credential reset
+  // is only offered when telemetry confirmed a positive click.
+  const ct = c.click_telemetry || {};
+  const clickObserved = Boolean(
+    ct.has_positive_click || (ct.events && ct.events.length > 0)
+  );
+  const fallbackActions = v.classification === "false_positive"
+    ? [
+        "Record as a false positive and close the case with the evidence attached.",
+        "No user notification required unless the recipient reported it.",
+      ]
+    : [
+        "Quarantine email across all tenant mailboxes",
+        "Block identified domains and URLs at Secure Web Gateway",
+        ...(clickObserved
+          ? ["Force credential reset and revoke active sessions for targeted user"]
+          : []),
+      ];
+  const actions = (v.recommended_actions || fallbackActions).map((a) => `
     <li class="action-check-item">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
       <span>${esc(a)}</span>
@@ -1783,6 +1809,17 @@ async function executeAction(actionName, label) {
 /* ---------- Two-Step Action Confirmation Safeguards ---------- */
 function confirmAndExecuteAction(actionName, label) {
   if (!state.case) return;
+  // Credential reset exists only where telemetry confirmed a positive click;
+  // everything else (and every benign verdict) has nothing to reset.
+  if (actionName === "reset_credentials") {
+    const ct = state.case.click_telemetry || {};
+    const clickObserved = Boolean(
+      ct.has_positive_click || (ct.events && ct.events.length > 0)
+    );
+    const benign =
+      state.case.verdict && state.case.verdict.classification === "false_positive";
+    if (!clickObserved || benign) return;
+  }
   const cid = state.case.id;
   const prompts = {
     quarantine: {
@@ -1998,6 +2035,7 @@ function resetDatabase() {
 
 /* ---------- App Initialization & Events ---------- */
 function init() {
+  initTheme();
   // Ensure modal is hidden on start
   const m = $("#confirm-modal");
   if (m) {
@@ -2189,6 +2227,87 @@ function init() {
       openCase(state.cases[0].id);
     }
   });
+
+  // Keep the console live: new intake, escalations, click telemetry and
+  // playbook updates appear within seconds without a page reload.
+  setInterval(async () => {
+    try {
+      await Promise.all([loadStatus(), loadMetrics(), loadCampaigns(), loadCases()]);
+      if (state.case && state.case.id) {
+        try {
+          const fresh = await api(`/api/cases/${state.case.id}`);
+          if (fresh && fresh.id === state.case.id) renderCase(fresh);
+        } catch (_) { /* keep showing the last rendered case */ }
+      }
+    } catch (e) {
+      console.warn("auto-refresh", e);
+    }
+  }, 5000);
 }
 
 document.addEventListener("DOMContentLoaded", init);
+
+
+/* ---------- Dark / Light Mode Theme Engine ---------- */
+function initTheme() {
+  const toggleBtn = $("#btn-theme-toggle");
+  const labelSpan = $("#theme-label-text");
+
+  function getSystemPreference() {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+
+  function getActiveTheme() {
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "light" || attr === "dark") return attr;
+    return getSystemPreference();
+  }
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem("phishpipe-theme", theme);
+    } catch (e) {}
+    if (labelSpan) {
+      labelSpan.textContent = theme === "light" ? "Light" : "Dark";
+    }
+    if (toggleBtn) {
+      toggleBtn.title = `Switch to ${theme === "light" ? "Dark" : "Light"} Mode`;
+      toggleBtn.setAttribute("aria-label", `Switch to ${theme === "light" ? "Dark" : "Light"} Mode`);
+    }
+  }
+
+  // Initial sync
+  let initial = "dark";
+  try {
+    const saved = localStorage.getItem("phishpipe-theme");
+    if (saved === "light" || saved === "dark") {
+      initial = saved;
+    } else if (getSystemPreference() === "light") {
+      initial = "light";
+    }
+  } catch (e) {}
+  applyTheme(initial);
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", () => {
+      const active = getActiveTheme();
+      const next = active === "light" ? "dark" : "light";
+      applyTheme(next);
+      showToast(`Switched to ${next.toUpperCase()} theme`, "info");
+    });
+  }
+
+  // Dynamic OS preference listener
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", (e) => {
+      let saved = null;
+      try {
+        saved = localStorage.getItem("phishpipe-theme");
+      } catch (err) {}
+      if (!saved) {
+        applyTheme(e.matches ? "light" : "dark");
+      }
+    });
+  }
+}
